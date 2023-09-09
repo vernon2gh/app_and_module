@@ -1,0 +1,9 @@
+*/.*
+*/a.out
+*/*.o
+*/*.ko
+*/*.symvers
+*/*.mod
+*/*.mod.c
+*/*.mod.o
+*/*.order
