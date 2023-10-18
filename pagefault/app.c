@@ -3,13 +3,37 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <string.h>
 #include <sys/mman.h>
 
 static int pagesize;
-
 static int fd;
-static char enbuf[] = "file memory.c +p";
-static char debuf[] = "file memory.c -p";
+
+static inline void open_dynamic_debug(void)
+{
+	fd = open("/sys/kernel/debug/dynamic_debug/control", O_RDWR);
+}
+
+static inline void close_dynamic_debug(void)
+{
+	close(fd);
+}
+
+static void enable_dynamic_debug(char *debugfile)
+{
+	char buf[50];
+
+	sprintf(buf, "file %s +p", debugfile);
+	write(fd, buf, strlen(buf));
+}
+
+static void disable_dynamic_debug(char *debugfile)
+{
+	char buf[50];
+
+	sprintf(buf, "file %s -p", debugfile);
+	write(fd, buf, strlen(buf));
+}
 
 void pagefault_normal(void)
 {
@@ -19,41 +43,50 @@ void pagefault_normal(void)
 	buf = mmap(0, pagesize, PROT_READ | PROT_WRITE,
 		   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
-	write(fd, enbuf, sizeof(enbuf));
+	enable_dynamic_debug("memory.c");
 	tmp = *buf;
 	*buf = 0x12;
-	write(fd, debuf, sizeof(debuf));
+	disable_dynamic_debug("memory.c");
 
 	munmap(buf, pagesize);
 }
 
-void pagefault_small_size_thp(void)
+static void __pagefault_thp(void *start_vaddr, int pagenum, char *debugfile)
 {
 	char *buf;
 	int i;
-#define PAGE_NUM 16
 
-	buf = mmap((void *)0x7f9877ff0000, pagesize * PAGE_NUM,
+	buf = mmap(start_vaddr, pagesize * pagenum,
 		   PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
-	write(fd, enbuf, sizeof(enbuf));
-	for (i = 0; i < PAGE_NUM; i++)
+	enable_dynamic_debug(debugfile);
+	for (i = 0; i < pagenum; i++)
 		buf[pagesize * i] = 0x12;
-	write(fd, debuf, sizeof(debuf));
+	disable_dynamic_debug(debugfile);
 
-	munmap(buf, pagesize * PAGE_NUM);
+	munmap(buf, pagesize * pagenum);
+}
+
+void pagefault_thp(void)
+{
+	__pagefault_thp((void *)0x7f987f200000, 512, "huge_memory.c");
+}
+
+void pagefault_small_size_thp(void)
+{
+	__pagefault_thp((void *)0x7f9877ff0000, 16, "memory.c");
 }
 
 int main(int argc, char *argv[])
 {
 	pagesize = getpagesize();
-
-	fd = open("/sys/kernel/debug/dynamic_debug/control", O_RDWR);
+	open_dynamic_debug();
 
 	pagefault_normal();
+	pagefault_thp();
 	pagefault_small_size_thp();
 
-	close(fd);
+	close_dynamic_debug();
 
 	return 0;
 }
