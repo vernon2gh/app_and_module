@@ -69,7 +69,7 @@ static void __pagefault_thp(void *start_vaddr, int pagenum, char *debugfile)
 
 void pagefault_thp(void)
 {
-	__pagefault_thp((void *)0x7f987f200000, 512, "huge_memory.c");
+	__pagefault_thp((void *)0x7f987f200000, 512, "*memory.c");
 }
 
 void pagefault_small_size_thp(void)
