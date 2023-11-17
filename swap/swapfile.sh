@@ -12,7 +12,7 @@ gcc app.c
 ./a.out &
 
 echo 0 > /sys/kernel/tracing/tracing_on
-pidof a.out > /sys/kernel/tracing/set_ftrace_pid
+echo `pidof a.out` > /sys/kernel/tracing/set_ftrace_pid
 echo function_graph > /sys/kernel/tracing/current_tracer
 echo madvise_cold_or_pageout_pte_range > /sys/kernel/tracing/set_graph_function
 echo > /sys/kernel/tracing/trace
