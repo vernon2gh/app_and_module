@@ -23,15 +23,12 @@ MAKE = make ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) \
        M=$(PWD)
 
 obj-m += mod.o
-APP = app.c
 
 all:
 	$(MAKE) modules
-	$(CROSS_COMPILE)gcc --static $(APP)
 
 install:
 	$(MAKE) INSTALL_MOD_PATH=$(ROOTFS) modules_install
 
 clean:
 	$(MAKE) clean
-	rm -fr a.out

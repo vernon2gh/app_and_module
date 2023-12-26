@@ -22,7 +22,7 @@ MAKE = make ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) \
        -C $(KERNEL_SRC) O=$(KERNEL_BUILD)               \
        M=$(PWD)
 
-obj-m += module.o
+obj-m += mod.o
 APP = app.c
 
 all:
