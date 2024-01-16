@@ -5,41 +5,66 @@
 #include <unistd.h>
 #include <sys/mman.h>
 
-char enbuf[] = "func get_unmapped_area +p";
-char debuf[] = "func get_unmapped_area -p";
+static int fd;
 
-char enbuf2[] = "func shmem_get_unmapped_area +p";
-char debuf2[] = "func shmem_get_unmapped_area -p";
+static void test_private_anon(void)
+{
+	char *buf;
+	char tmp;
+
+	buf = mmap(0, 4096, PROT_READ | PROT_WRITE,
+			MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	tmp = *buf;
+	*buf = 0x1;
+	munmap(buf, 4096);
+}
+
+static void test_share_anon(void)
+{
+	char *buf;
+	char tmp;
+
+	buf = mmap(0, 4096, PROT_READ | PROT_WRITE,
+			MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+	tmp = *buf;
+	*buf = 0x2;
+	munmap(buf, 4096);
+}
+
+static void test_private_file(void)
+{
+	char *buf;
+	char tmp;
+
+	buf = mmap(0, 4096, PROT_READ | PROT_WRITE,
+			MAP_PRIVATE | MAP_FILE, fd, 0);
+	tmp = *buf;
+	*buf = 'a';
+	munmap(buf, 4096);
+}
+
+static void test_share_file(void)
+{
+	char *buf;
+	char tmp;
+
+	buf = mmap(0, 4096, PROT_READ | PROT_WRITE,
+			MAP_SHARED | MAP_FILE, fd, 0);
+	tmp = *buf;
+	*buf = 'b';
+	munmap(buf, 4096);
+}
 
 int main(int argc, char *argv[])
 {
-	char *buf;
-	int fd, fd_test;
+	fd = open("testfile", O_RDWR | O_CREAT, 0666);
+	write(fd, "testtext", 8);
 
-	printf("hello world.\n");
+	test_private_anon();
+	test_share_anon();
+	test_private_file();
+	test_share_file();
 
-	fd = open("/sys/kernel/debug/dynamic_debug/control", O_RDWR);
-	write(fd, enbuf, sizeof(enbuf));
-	write(fd, enbuf2, sizeof(enbuf2));
-
-	buf = mmap(0, 4096, PROT_READ | PROT_WRITE,
-			MAP_PRIVATE | MAP_ANONYMOUS, -1, 0); // PRIVATE ANONYMOUS
-	munmap(buf, 4096);
-	buf = mmap(0, 4096, PROT_READ | PROT_WRITE,
-			MAP_SHARED | MAP_ANONYMOUS, -1, 0);  // SHARE ANONYMOUS
-	munmap(buf, 4096);
-
-	fd_test = open("./hello.c", O_RDWR);
-	buf = mmap(0, 4096, PROT_READ | PROT_WRITE,
-			MAP_PRIVATE, fd_test, 0);   // PRIVATE FILE
-	munmap(buf, 4096);
-	buf = mmap(0, 4096, PROT_READ | PROT_WRITE,
-			MAP_SHARED, fd_test, 0);    // SHARE FILE
-	munmap(buf, 4096);
-	close(fd_test);
-
-	write(fd, debuf, sizeof(debuf));
-	write(fd, debuf2, sizeof(debuf2));
 	close(fd);
 
 	return 0;
