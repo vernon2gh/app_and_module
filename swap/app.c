@@ -5,35 +5,10 @@
 #include <unistd.h>
 #include <string.h>
 #include <sys/mman.h>
-
-#define SHM_NAME "sync_status"
+#include "dynamic_debug.h"
+#include "trace.h"
 
 static int pagesize;
-static char *buf;
-
-static inline void sync_start(void)
-{
-	int fd;
-
-	fd = shm_open(SHM_NAME, O_RDWR | O_CREAT, 0777);
-	ftruncate(fd, pagesize);
-
-	buf = mmap(NULL, pagesize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-}
-
-static inline void sync_end(void)
-{
-	munmap(buf, pagesize);
-	shm_unlink(SHM_NAME);
-}
-
-static void wait_shell_finish(void)
-{
-	memcpy(buf, "app2shell", 9);
-
-	while (strncmp(buf, "shell2app", 9))
-		sleep(1);
-}
 
 void swap_normal(void)
 {
@@ -44,9 +19,11 @@ void swap_normal(void)
 
 	buf[0] = 't';
 
-	wait_shell_finish();
+	dynamic_debug_control("file madvise.c +p");
+	trace_on();
 	madvise(buf, pagesize, MADV_PAGEOUT);
-	wait_shell_finish();
+	trace_off();
+	dynamic_debug_control("file madvise.c -p");
 
 	munmap(buf, pagesize);
 }
@@ -62,9 +39,11 @@ static void __swap_thp(void *start_vaddr, int pagenum)
 	for (i = 0; i < pagenum; i++)
 		buf[pagesize * i] = 0x12;
 
-	wait_shell_finish();
+	dynamic_debug_control("file madvise.c +p");
+	trace_on();
 	madvise(buf, pagesize * pagenum, MADV_PAGEOUT);
-	wait_shell_finish();
+	trace_off();
+	dynamic_debug_control("file madvise.c -p");
 
 	munmap(buf, pagesize * pagenum);
 }
@@ -74,21 +53,29 @@ void swap_thp(void)
 	__swap_thp((void *)0x7f987f200000, 512);
 }
 
-void swap_small_size_thp(void)
+void swap_multi_size_thp(void)
 {
 	__swap_thp((void *)0x7f9877ff0000, 16);
 }
 
 int main(int argc, char *argv[])
 {
+	dynamic_debug_start();
+	trace_configure(getpid(), "madvise_cold_or_pageout_pte_range");
 	pagesize = getpagesize();
-	sync_start();
 
-	swap_normal();
-	swap_thp();
-	swap_small_size_thp();
+	if (!argv[1])
+		goto DEFAULT;
 
-	sync_end();
+	if (!strncmp(argv[1], "thp", strlen("thp")))
+		swap_thp();
+	else if (!strncmp(argv[1], "mthp", strlen("mthp")))
+		swap_multi_size_thp();
+	else
+DEFAULT:	swap_normal();
+
+	trace_exit();
+	dynamic_debug_end();
 
 	return 0;
 }

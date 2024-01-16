@@ -18,16 +18,18 @@ ifeq ($(CROSS_COMPILE),)
 	CROSS_COMPILE =
 endif
 
+COMMON = ../common
+
 MAKE = make ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) \
        -C $(KERNEL_SRC) O=$(KERNEL_BUILD)               \
        M=$(PWD)
 
 obj-m += mod.o
-APP = app.c
+APP = $(COMMON)/dynamic_debug.c $(COMMON)/trace.c app.c
 
 all:
 	$(MAKE) modules
-	$(CROSS_COMPILE)gcc --static $(APP)
+	$(CROSS_COMPILE)gcc --static -I$(COMMON) $(APP)
 
 install:
 	$(MAKE) INSTALL_MOD_PATH=$(ROOTFS) modules_install

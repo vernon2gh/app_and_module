@@ -1,10 +1,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <string.h>
 #include <sys/mman.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <fcntl.h>
 
 #ifdef DEBUG
 #define pr_debug(fmt, ...) printf(fmt, ##__VA_ARGS__)
@@ -19,7 +20,7 @@
  *
  * bpftrace -e 'uprobe:./a.out:test_common { @start[arg0]=nsecs; } uretprobe:./a.out:test_common /@start[retval]/{ @ns[func] = avg(nsecs - @start[retval]); delete(@start[retval]);}'
  */
-char *test_common(char *buf)
+static char *test_common(char *buf)
 {
 	char i;
 
@@ -55,7 +56,7 @@ void test_mmap_file(void)
 	char *buf;
 	int fd;
 
-	fd = open("file.txt", O_CREAT | O_RDWR, 0664);
+	fd = open("testfile", O_CREAT | O_RDWR, 0664);
 	ftruncate(fd, 4096 * 16);
 
 	buf = mmap(NULL, 4096 * 16, PROT_READ | PROT_WRITE,
@@ -64,18 +65,22 @@ void test_mmap_file(void)
 	munmap(buf, 4096 * 16);
 
 	close(fd);
-	remove("file.txt");
+	remove("testfile");
 }
 
 int main(int argc, char *argv[])
 {
 	printf("PAGESIZE %d\n", getpagesize());
 
-	while (1) {
-		test_malloc();
+	if (!argv[1])
+		goto DEFAULT;
+
+	if (!strncmp(argv[1], "mmap_anon", strlen("mmap_anon")))
 		test_mmap_anon();
+	else if (!strncmp(argv[1], "mmap_file", strlen("mmap_file")))
 		test_mmap_file();
-	}
+	else
+DEFAULT:	test_malloc();
 
 	return 0;
 }

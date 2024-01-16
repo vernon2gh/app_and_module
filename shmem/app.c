@@ -1,8 +1,9 @@
 #include <stdio.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
@@ -42,8 +43,13 @@ static void test_sysv_shmem(void)
 
 int main(int argc, char *argv[])
 {
-	test_posix_shmem();
-	test_sysv_shmem();
+	if (!argv[1])
+		goto DEFAULT;
+
+	if (!strncmp(argv[1], "sysv", strlen("sysv")))
+		test_sysv_shmem();
+	else
+DEFAULT:	test_posix_shmem();
 
 	return 0;
 }

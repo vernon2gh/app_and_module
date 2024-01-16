@@ -5,35 +5,9 @@
 #include <unistd.h>
 #include <string.h>
 #include <sys/mman.h>
+#include "dynamic_debug.h"
 
 static int pagesize;
-static int fd;
-
-static inline void open_dynamic_debug(void)
-{
-	fd = open("/sys/kernel/debug/dynamic_debug/control", O_RDWR);
-}
-
-static inline void close_dynamic_debug(void)
-{
-	close(fd);
-}
-
-static void enable_dynamic_debug(char *debugfile)
-{
-	char buf[50];
-
-	sprintf(buf, "file %s +p", debugfile);
-	write(fd, buf, strlen(buf));
-}
-
-static void disable_dynamic_debug(char *debugfile)
-{
-	char buf[50];
-
-	sprintf(buf, "file %s -p", debugfile);
-	write(fd, buf, strlen(buf));
-}
 
 void pagefault_normal(void)
 {
@@ -43,15 +17,15 @@ void pagefault_normal(void)
 	buf = mmap(0, pagesize, PROT_READ | PROT_WRITE,
 		   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
-	enable_dynamic_debug("memory.c");
+	dynamic_debug_control("file memory.c +p");
 	tmp = *buf;
 	*buf = 0x12;
-	disable_dynamic_debug("memory.c");
+	dynamic_debug_control("file memory.c -p");
 
 	munmap(buf, pagesize);
 }
 
-static void __pagefault_thp(void *start_vaddr, int pagenum, char *debugfile)
+static void __pagefault_thp(void *start_vaddr, int pagenum)
 {
 	char *buf;
 	int i;
@@ -59,34 +33,40 @@ static void __pagefault_thp(void *start_vaddr, int pagenum, char *debugfile)
 	buf = mmap(start_vaddr, pagesize * pagenum,
 		   PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
-	enable_dynamic_debug(debugfile);
+	dynamic_debug_control("file *memory.c +p");
 	for (i = 0; i < pagenum; i++)
 		buf[pagesize * i] = 0x12;
-	disable_dynamic_debug(debugfile);
+	dynamic_debug_control("file *memory.c -p");
 
 	munmap(buf, pagesize * pagenum);
 }
 
 void pagefault_thp(void)
 {
-	__pagefault_thp((void *)0x7f987f200000, 512, "*memory.c");
+	__pagefault_thp((void *)0x7f987f200000, 512);
 }
 
-void pagefault_small_size_thp(void)
+void pagefault_multi_size_thp(void)
 {
-	__pagefault_thp((void *)0x7f9877ff0000, 16, "memory.c");
+	__pagefault_thp((void *)0x7f9877ff0000, 16);
 }
 
 int main(int argc, char *argv[])
 {
+	dynamic_debug_start();
 	pagesize = getpagesize();
-	open_dynamic_debug();
 
-	pagefault_normal();
-	pagefault_thp();
-	pagefault_small_size_thp();
+	if (!argv[1])
+		goto DEFAULT;
 
-	close_dynamic_debug();
+	if (!strncmp(argv[1], "thp", strlen("thp")))
+		pagefault_thp();
+	else if (!strncmp(argv[1], "mthp", strlen("mthp")))
+		pagefault_multi_size_thp();
+	else
+DEFAULT:	pagefault_normal();
+
+	dynamic_debug_end();
 
 	return 0;
 }
