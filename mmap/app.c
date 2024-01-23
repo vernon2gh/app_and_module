@@ -8,6 +8,8 @@
 #include "dynamic_debug.h"
 #include "trace.h"
 
+static int pagesize;
+
 static void test_private_anon(void)
 {
 	char *buf;
@@ -15,7 +17,7 @@ static void test_private_anon(void)
 
 	dynamic_debug_control("file mmap.c +p");
 	trace_on();
-	buf = mmap(0, 4096, PROT_READ | PROT_WRITE,
+	buf = mmap(0, pagesize, PROT_READ | PROT_WRITE,
 			MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	trace_off();
 	dynamic_debug_control("file mmap.c -p");
@@ -23,7 +25,7 @@ static void test_private_anon(void)
 	tmp = *buf;
 	*buf = 0x1;
 
-	munmap(buf, 4096);
+	munmap(buf, pagesize);
 }
 
 static void test_share_anon(void)
@@ -31,47 +33,56 @@ static void test_share_anon(void)
 	char *buf;
 	char tmp;
 
-	buf = mmap(0, 4096, PROT_READ | PROT_WRITE,
+	buf = mmap(0, pagesize, PROT_READ | PROT_WRITE,
 			MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 	tmp = *buf;
 	*buf = 0x2;
-	munmap(buf, 4096);
+	munmap(buf, pagesize);
 }
 
 static void test_private_file(void)
 {
-	int fd = open("testfile", O_RDWR);
 	char *buf;
 	char tmp;
+	int fd;
 
-	buf = mmap(0, 4096, PROT_READ | PROT_WRITE,
+	fd = open("testfile", O_RDWR | O_CREAT, 0666);
+	ftruncate(fd, pagesize);
+
+	buf = mmap(0, pagesize, PROT_READ | PROT_WRITE,
 			MAP_PRIVATE | MAP_FILE, fd, 0);
 	tmp = *buf;
 	*buf = 'a';
-	munmap(buf, 4096);
+	munmap(buf, pagesize);
 
 	close(fd);
+	remove("testfile");
 }
 
 static void test_share_file(void)
 {
-	int fd = open("testfile", O_RDWR);
 	char *buf;
 	char tmp;
+	int fd;
 
-	buf = mmap(0, 4096, PROT_READ | PROT_WRITE,
+	fd = open("testfile", O_RDWR | O_CREAT, 0666);
+	ftruncate(fd, pagesize);
+
+	buf = mmap(0, pagesize, PROT_READ | PROT_WRITE,
 			MAP_SHARED | MAP_FILE, fd, 0);
 	tmp = *buf;
 	*buf = 'b';
-	munmap(buf, 4096);
+	munmap(buf, pagesize);
 
 	close(fd);
+	remove("testfile");
 }
 
 int main(int argc, char *argv[])
 {
 	dynamic_debug_start();
 	trace_configure(getpid(), "get_unmapped_area");
+	pagesize = getpagesize();
 
 	if (!argv[1])
 		goto DEFAULT;
