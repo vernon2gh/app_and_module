@@ -11,10 +11,10 @@
 
 #define PAGESIZE	4096
 
-#define print_meminfo(format, ...)		\
-do {						\
-	printf(format, ##__VA_ARGS__);		\
-	system("cat /proc/meminfo | grep file");\
+#define print_meminfo(format, ...)				\
+do {								\
+	printf(format, ##__VA_ARGS__);				\
+	system("cat /proc/meminfo | grep -E \"file|anon\"");	\
 } while(0)
 
 static inline int get_file_pages(int fd)

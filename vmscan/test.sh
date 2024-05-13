@@ -2,7 +2,7 @@
 
 echo "==== create testfile ===="
 fallocate -l 100M testfile
-cat /proc/meminfo | grep "file"
+cat /proc/meminfo | grep -E "file|anon"
 
 echo "==== first call demo, $1 ===="
 ./a.out $1
