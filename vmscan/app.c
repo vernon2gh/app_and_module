@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <string.h>
+#include <errno.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
@@ -17,6 +18,49 @@ do {								\
 	system("cat /proc/meminfo | grep -E \"file|anon\"");	\
 } while(0)
 
+enum demo_entry {
+	DEMO_READ,
+	DEMO_WRITE,
+	DEMO_MMAP_FILE_SHARE_READ,
+	DEMO_MMAP_FILE_SHARE_WRITE,
+	DEMO_MMAP_FILE_PRIVATE_READ,
+	DEMO_MMAP_FILE_PRIVATE_WRITE,
+	DEMO_MMAP_ANON_SHARE_READ,
+	DEMO_MMAP_ANON_SHARE_WRITE,
+	DEMO_MMAP_ANON_PRIVATE_READ,
+	DEMO_MMAP_ANON_PRIVATE_WRITE,
+	DEMO_ENTRY_MAX,
+};
+
+static char *string[DEMO_ENTRY_MAX] = {
+	"read",
+	"write",
+	"mmap_file_share_read",
+	"mmap_file_share_write",
+	"mmap_file_private_read",
+	"mmap_file_private_write",
+	"mmap_anon_share_read",
+	"mmap_anon_share_write",
+	"mmap_anon_private_read",
+	"mmap_anon_private_write"
+};
+
+static enum demo_entry test_demo_entry(char *entry)
+{
+	int i;
+
+	if (!entry)
+		return DEMO_READ;
+
+	for (i = 0; i < DEMO_ENTRY_MAX; i++) {
+		if (!strncmp(entry, string[i], strlen(string[i])))
+			return i;
+	}
+
+	printf("Don't look for right demo entry.\n");
+	return -EINVAL;
+}
+
 static inline int get_file_pages(int fd)
 {
 	struct stat st;
@@ -29,7 +73,7 @@ static inline int get_file_pages(int fd)
 	return st.st_size / PAGESIZE;
 }
 
-static void test_promote_active_list_from_read_syscall(void)
+static void test_read_syscall(void)
 {
 	char buf[PAGESIZE];
 	int nr_pages;
@@ -62,7 +106,7 @@ static void test_promote_active_list_from_read_syscall(void)
 	close(fd);
 }
 
-static void test_promote_active_list_from_write_syscall(void)
+static void test_write_syscall(void)
 {
 	char buf[PAGESIZE] = { 0 };
 	int nr_pages;
@@ -95,21 +139,21 @@ static void test_promote_active_list_from_write_syscall(void)
 	close(fd);
 }
 
-static void test_promote_active_list_from_mmap_syscall(bool share, bool write)
+static void test_mmap_syscall(int flags, bool write)
 {
+	bool file = !(flags & MAP_ANON);
+	bool share = !!(flags & MAP_SHARED);
+	int fd, nr_pages, i;
 	char *buf;
-	int flags;
-	int fd;
-	int nr_pages, i;
 	char tmp;
 
-	fd = open("testfile", O_RDWR);
-	nr_pages = get_file_pages(fd);
-
-	if (share)
-		flags = MAP_FILE | MAP_SHARED;
-	else
-		flags = MAP_FILE | MAP_PRIVATE;
+	if (file) {
+		fd = open("testfile", O_RDWR);
+		nr_pages = get_file_pages(fd);
+	} else {
+		fd = -1;
+		nr_pages = 100 * 1024 * 1024 / PAGESIZE;
+	}
 
 	buf = mmap(0, nr_pages * PAGESIZE, PROT_READ | PROT_WRITE, flags, fd, 0);
 
@@ -119,7 +163,8 @@ static void test_promote_active_list_from_mmap_syscall(bool share, bool write)
 		else
 			tmp = buf[i * PAGESIZE];
 	}
-	print_meminfo("meminfo after first %s %s\n", share ? "share" : "private",
+	print_meminfo("meminfo after first %s_%s_%s\n", file ? "file" : "anon",
+							share ? "share" : "private",
 							write ? "write" : "read");
 
 	for (i = 0; i < nr_pages; i++) {
@@ -128,41 +173,53 @@ static void test_promote_active_list_from_mmap_syscall(bool share, bool write)
 		else
 			tmp = buf[i * PAGESIZE];
 	}
-	print_meminfo("meminfo after first %s %s\n", share ? "share" : "private",
+	print_meminfo("meminfo after second %s_%s_%s\n", file ? "file" : "anon",
+							share ? "share" : "private",
 							write ? "write" : "read");
 
-	dynamic_debug_control("file memory.c +p");
 	munmap(buf, nr_pages * PAGESIZE);
-	dynamic_debug_control("file memory.c -p");
 	print_meminfo("meminfo after munmap\n");
 
-	close(fd);
+	if (file)
+		close(fd);
 }
 
 int main(int argc, char *argv[])
 {
 	dynamic_debug_start();
 
-	if (!argv[1]) {
-		printf("Empty options to execute default read() SYSCALL.\n");
-		goto DEFAULT;
-	}
-
-	if (!strncmp(argv[1], "read", strlen("read")))
-DEFAULT:	test_promote_active_list_from_read_syscall();
-	else if (!strncmp(argv[1], "write", strlen("write")))
-		test_promote_active_list_from_write_syscall();
-	else if (!strncmp(argv[1], "mmap_file_share_read", strlen("mmap_file_share_read")))
-		test_promote_active_list_from_mmap_syscall(1, 0);
-	else if (!strncmp(argv[1], "mmap_file_share_write", strlen("mmap_file_share_write")))
-		test_promote_active_list_from_mmap_syscall(1, 1);
-	else if (!strncmp(argv[1], "mmap_file_private_read", strlen("mmap_file_private_read")))
-		test_promote_active_list_from_mmap_syscall(0, 0);
-	else if (!strncmp(argv[1], "mmap_file_private_write", strlen("mmap_file_private_write")))
-		test_promote_active_list_from_mmap_syscall(0, 1);
-	else {
-		printf("Not exit options to execute default read() SYSCALL.\n");
-		goto DEFAULT;
+	switch (test_demo_entry(argv[1])) {
+		default:
+		case DEMO_READ:
+			test_read_syscall();
+			break;
+		case DEMO_WRITE:
+			test_write_syscall();
+			break;
+		case DEMO_MMAP_FILE_SHARE_READ:
+			test_mmap_syscall(MAP_FILE | MAP_SHARED, 0);
+			break;
+		case DEMO_MMAP_FILE_SHARE_WRITE:
+			test_mmap_syscall(MAP_FILE | MAP_SHARED, 1);
+			break;
+		case DEMO_MMAP_FILE_PRIVATE_READ:
+			test_mmap_syscall(MAP_FILE | MAP_PRIVATE, 0);
+			break;
+		case DEMO_MMAP_FILE_PRIVATE_WRITE:
+			test_mmap_syscall(MAP_FILE | MAP_PRIVATE, 1);
+			break;
+		case DEMO_MMAP_ANON_SHARE_READ:
+			test_mmap_syscall(MAP_ANON | MAP_SHARED, 0);
+			break;
+		case DEMO_MMAP_ANON_SHARE_WRITE:
+			test_mmap_syscall(MAP_ANON | MAP_SHARED, 1);
+			break;
+		case DEMO_MMAP_ANON_PRIVATE_READ:
+			test_mmap_syscall(MAP_ANON | MAP_PRIVATE, 0);
+			break;
+		case DEMO_MMAP_ANON_PRIVATE_WRITE:
+			test_mmap_syscall(MAP_ANON | MAP_PRIVATE, 1);
+			break;
 	}
 
 	dynamic_debug_end();
