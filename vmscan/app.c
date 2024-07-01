@@ -91,7 +91,7 @@ static void test_read_syscall(void)
 			break;
 		}
 	}
-	print_meminfo("meminfo after first read\n");
+	print_meminfo("meminfo after first read syscall\n");
 
 	lseek(fd, 0, SEEK_SET);
 	for (i = 0; i < nr_pages; i++) {
@@ -101,7 +101,7 @@ static void test_read_syscall(void)
 			break;
 		}
 	}
-	print_meminfo("meminfo after second read\n");
+	print_meminfo("meminfo after second read syscall\n");
 
 	close(fd);
 }
@@ -124,7 +124,7 @@ static void test_write_syscall(void)
 			break;
 		}
 	}
-	print_meminfo("meminfo after first write\n");
+	print_meminfo("meminfo after first write syscall\n");
 
 	lseek(fd, 0, SEEK_SET);
 	for (i = 0; i < nr_pages; i++) {
@@ -134,7 +134,7 @@ static void test_write_syscall(void)
 			break;
 		}
 	}
-	print_meminfo("meminfo after second write\n");
+	print_meminfo("meminfo after second write syscall\n");
 
 	close(fd);
 }
@@ -163,9 +163,9 @@ static void test_mmap_syscall(int flags, bool write)
 		else
 			tmp = buf[i * PAGESIZE];
 	}
-	print_meminfo("meminfo after first %s_%s_%s\n", file ? "file" : "anon",
-							share ? "share" : "private",
-							write ? "write" : "read");
+	print_meminfo("meminfo after first %s_%s_%s from mmap syscall\n",
+			file ? "file" : "anon", share ? "share" : "private",
+			write ? "write" : "read");
 
 	for (i = 0; i < nr_pages; i++) {
 		if (write)
@@ -173,12 +173,12 @@ static void test_mmap_syscall(int flags, bool write)
 		else
 			tmp = buf[i * PAGESIZE];
 	}
-	print_meminfo("meminfo after second %s_%s_%s\n", file ? "file" : "anon",
-							share ? "share" : "private",
-							write ? "write" : "read");
+	print_meminfo("meminfo after second %s_%s_%s from mmap syscall\n",
+			file ? "file" : "anon", share ? "share" : "private",
+			write ? "write" : "read");
 
 	munmap(buf, nr_pages * PAGESIZE);
-	print_meminfo("meminfo after munmap\n");
+	print_meminfo("meminfo after munmap syscall\n");
 
 	if (file)
 		close(fd);
