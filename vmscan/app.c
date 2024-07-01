@@ -8,9 +8,12 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
 #include "dynamic_debug.h"
 
 #define PAGESIZE	4096
+#define SHMSIZE		(100 * 1024 * 1024)
 
 #define print_meminfo(format, ...)				\
 do {								\
@@ -29,6 +32,10 @@ enum demo_entry {
 	DEMO_MMAP_ANON_SHARE_WRITE,
 	DEMO_MMAP_ANON_PRIVATE_READ,
 	DEMO_MMAP_ANON_PRIVATE_WRITE,
+	DEMO_SHM_SYSTEMV_READ,
+	DEMO_SHM_SYSTEMV_WRITE,
+	DEMO_SHM_POSIX_READ,
+	DEMO_SHM_POSIX_WRITE,
 	DEMO_ENTRY_MAX,
 };
 
@@ -42,7 +49,11 @@ static char *string[DEMO_ENTRY_MAX] = {
 	"mmap_anon_share_read",
 	"mmap_anon_share_write",
 	"mmap_anon_private_read",
-	"mmap_anon_private_write"
+	"mmap_anon_private_write",
+	"shm_systemv_read",
+	"shm_systemv_write",
+	"shm_posix_read",
+	"shm_posix_write",
 };
 
 static enum demo_entry test_demo_entry(char *entry)
@@ -184,6 +195,77 @@ static void test_mmap_syscall(int flags, bool write)
 		close(fd);
 }
 
+static void test_shm_systemv(bool write)
+{
+	int nr_pages = SHMSIZE / PAGESIZE;
+ 	int shmid, i;
+	char *buf;
+	char tmp;
+
+	shmid = shmget(ftok("shmtest1", 0), SHMSIZE, IPC_CREAT|0666);
+
+	buf = shmat(shmid, NULL, 0);
+
+	for (i = 0; i < nr_pages; i++) {
+		if (write)
+			buf[i * PAGESIZE] = 'a';
+		else
+			tmp = buf[i * PAGESIZE];
+	}
+	print_meminfo("meminfo after first %s from systemv shm syscall\n",
+			write ? "write" : "read");
+
+	for (i = 0; i < nr_pages; i++) {
+		if (write)
+			buf[i * PAGESIZE] = 'b';
+		else
+			tmp = buf[i * PAGESIZE];
+	}
+	print_meminfo("meminfo after second %s from systemv shm syscall\n",
+			write ? "write" : "read");
+
+	shmdt(buf);
+	print_meminfo("meminfo after shmdt syscall\n");
+
+	// shmctl(shmid, IPC_RMID, NULL);
+}
+
+static void test_shm_posix(bool write)
+{
+	int nr_pages = SHMSIZE / PAGESIZE;
+	int fd, i;
+	char *buf;
+	char tmp;
+
+	fd = shm_open("shmtest2", O_RDWR | O_CREAT, 0777);
+	ftruncate(fd, SHMSIZE);
+
+	buf = mmap(NULL, SHMSIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+
+	for (i = 0; i < nr_pages; i++) {
+		if (write)
+			buf[i * PAGESIZE] = 'a';
+		else
+			tmp = buf[i * PAGESIZE];
+	}
+	print_meminfo("meminfo after first %s from posix shm syscall\n",
+			write ? "write" : "read");
+
+	for (i = 0; i < nr_pages; i++) {
+		if (write)
+			buf[i * PAGESIZE] = 'b';
+		else
+			tmp = buf[i * PAGESIZE];
+	}
+	print_meminfo("meminfo after second %s from posix shm syscall\n",
+			write ? "write" : "read");
+
+	munmap(buf, SHMSIZE);
+	print_meminfo("meminfo after munmap syscall\n");
+
+	// shm_unlink("shmtest2");
+}
+
 int main(int argc, char *argv[])
 {
 	dynamic_debug_start();
@@ -219,6 +301,18 @@ int main(int argc, char *argv[])
 			break;
 		case DEMO_MMAP_ANON_PRIVATE_WRITE:
 			test_mmap_syscall(MAP_ANON | MAP_PRIVATE, 1);
+			break;
+		case DEMO_SHM_SYSTEMV_READ:
+			test_shm_systemv(0);
+			break;
+		case DEMO_SHM_SYSTEMV_WRITE:
+			test_shm_systemv(1);
+			break;
+		case DEMO_SHM_POSIX_READ:
+			test_shm_posix(0);
+			break;
+		case DEMO_SHM_POSIX_WRITE:
+			test_shm_posix(1);
 			break;
 	}
 
