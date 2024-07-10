@@ -140,5 +140,5 @@ module_init(slab_init);
 module_exit(slab_exit);
 
 MODULE_AUTHOR("Vernon Yang <vernon2gm@gmail.com>");
-MODULE_DESCRIPTION("SLAB MODULE");
+MODULE_DESCRIPTION("SLAB ALLOCATOR MODULE");
 MODULE_LICENSE("GPL");
