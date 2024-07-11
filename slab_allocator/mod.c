@@ -61,6 +61,7 @@ enum demo_entry {
 	DEMO_KMALLOC_4KB,
 	DEMO_KMALLOC_4KB_RECLAIM,
 	DEMO_KMALLOC_4MB,
+	DEMO_KMALLOC_4MB_RECLAIM,
 	DEMO_KMEMCACHE,
 	DEMO_KMEMCACHE_RECLAIM,
 	DEMO_ENTRY_MAX,
@@ -70,6 +71,7 @@ static char *string[DEMO_ENTRY_MAX] = {
 	"kmalloc_4KB",
 	"kmalloc_4KB_reclaim",
 	"kmalloc_4MB",
+	"kmalloc_4MB_reclaim",
 	"kmemcache",
 	"kmemcache_reclaim",
 };
@@ -107,6 +109,11 @@ static int __init slab_init(void)
 		case DEMO_KMALLOC_4MB:
 			test_kmalloc(SIZE_4MB, GFP_KERNEL);
 			break;
+		case DEMO_KMALLOC_4MB_RECLAIM:
+			pr_warn("__GFP_RECLAIMABLE is invaild for page allocator, "
+				"only vaild for slab allocator kmalloc(size <= 8KB)\n");
+			test_kmalloc(SIZE_4MB, GFP_KERNEL | __GFP_RECLAIMABLE);
+			break;
 		case DEMO_KMEMCACHE:
 			test_kmemcache_alloc(0);
 			break;
@@ -127,6 +134,7 @@ static void __exit slab_exit(void)
 			test_kfree(SIZE_4KB);
 			break;
 		case DEMO_KMALLOC_4MB:
+		case DEMO_KMALLOC_4MB_RECLAIM:
 			test_kfree(SIZE_4MB);
 			break;
 		case DEMO_KMEMCACHE:

@@ -73,6 +73,8 @@ static int __init page_init(void)
 			test_alloc_page(ORDER_4KB, GFP_KERNEL);
 			break;
 		case DEMO_ALLOC_PAGE_4KB_RECLAIM:
+			pr_warn("__GFP_RECLAIMABLE is invaild for page allocator, "
+				"only vaild for slab allocator kmalloc(size <= 8KB)\n");
 			test_alloc_page(ORDER_4KB, GFP_KERNEL | __GFP_RECLAIMABLE);
 			break;
 		case DEMO_ALLOC_PAGE_4MB:
