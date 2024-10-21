@@ -22,10 +22,14 @@ void trace_configure(int pid, const char *function)
 	/*
 	 * echo $TRACE_PID > /sys/kernel/tracing/set_ftrace_pid
 	 */
-	tmp_fd = open("/sys/kernel/tracing/set_ftrace_pid", O_RDWR);
-	sprintf(buf, "%d", pid);
-	write(tmp_fd, buf, strlen(buf));
-	close(tmp_fd);
+	if (pid) {
+		tmp_fd = open("/sys/kernel/tracing/set_ftrace_pid", O_RDWR);
+		sprintf(buf, "%d", pid);
+		write(tmp_fd, buf, strlen(buf));
+		close(tmp_fd);
+	} else {
+		fclose(fopen("/sys/kernel/tracing/set_ftrace_pid", "w"));
+	}
 
 	/*
 	 * echo function_graph > /sys/kernel/tracing/current_tracer

@@ -1,27 +1,34 @@
 #!/bin/bash
 
-echo /dev/sdb > /sys/block/zram0/backing_dev
-# fallocate -l 20M extswapfile
-# echo ./extswapfile > /sys/block/zram0/backing_dev
-echo 20M > /sys/block/zram0/disksize
-mkswap /dev/zram0
+WB=false
+
+if [ -e "/sys/block/zram0/backing_dev" ]; then
+	WB=true
+	echo /dev/sdb > /sys/block/zram0/backing_dev
+fi
+
+if [ "$(cat /sys/block/zram0/disksize)" = "0" ]; then
+	echo 20M > /sys/block/zram0/disksize
+	mkswap /dev/zram0
+fi
+
 swapon /dev/zram0
 
-./a.out &
+./a.out $1
 
-## default block state
-cat /sys/kernel/debug/zram/zram0/block_state
-#            0           15.823322 ......
-#          256           17.017736 ......
+if [ $WB = "true" ]; then
+	## default block state
+	cat /sys/kernel/debug/zram/zram0/block_state
 
-echo all > /sys/block/zram0/idle
-cat /sys/kernel/debug/zram/zram0/block_state
-#            0           15.823322 ...i..
-#          256           17.017736 ...i..
+	## mark all page to idle flags
+	echo all > /sys/block/zram0/idle
+	cat /sys/kernel/debug/zram/zram0/block_state
 
-echo idle > /sys/block/zram0/writeback
-cat /sys/kernel/debug/zram/zram0/block_state
-#            0            0.000000 .w....
-#          256            0.000000 .w....
+	## writeback idle page to backing device
+	echo idle > /sys/block/zram0/writeback
+	cat /sys/kernel/debug/zram/zram0/block_state
+fi
 
 swapoff /dev/zram0
+cat /sys/kernel/tracing/trace > trace.txt
+cat /proc/vmstat | grep swp

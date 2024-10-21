@@ -1,13 +1,17 @@
 #!/bin/bash
 
-if [ ! -e extswapfile ]; then
-	fallocate -l 20M extswapfile
-	chmod 0600 ./extswapfile
-	mkswap ./extswapfile
+SWAPFILE=~/extswapfile
+
+if [ ! -e $SWAPFILE ]; then
+	fallocate -l 20M $SWAPFILE
+	chmod 0600 $SWAPFILE
+	mkswap $SWAPFILE
 fi
 
-swapon ./extswapfile
+swapon $SWAPFILE
 
-./a.out
+./a.out $1
 
-swapoff ./extswapfile
+swapoff $SWAPFILE
+cat /sys/kernel/tracing/trace > trace.txt
+cat /proc/vmstat | grep swp
