@@ -1,4 +1,4 @@
 #!/bin/bash
 
-install mod.ko
+insmod mod.ko
 ./a.out

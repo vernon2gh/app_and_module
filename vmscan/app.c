@@ -61,7 +61,7 @@ static enum demo_entry test_demo_entry(char *entry)
 	int i;
 
 	if (!entry)
-		return DEMO_READ;
+		return 0;
 
 	for (i = 0; i < DEMO_ENTRY_MAX; i++) {
 		if (!strncmp(entry, string[i], strlen(entry)))

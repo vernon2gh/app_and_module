@@ -9,6 +9,45 @@
 static struct kmem_cache *cache;
 static void **buf;
 
+static char *demo_entry = "kmalloc_4KB";
+module_param(demo_entry, charp, 0444);
+MODULE_PARM_DESC(demo_entry, "A demo entry string");
+
+enum demo_entry {
+	DEMO_KMALLOC_4KB,
+	DEMO_KMALLOC_4KB_RECLAIM,
+	DEMO_KMALLOC_4MB,
+	DEMO_KMALLOC_4MB_RECLAIM,
+	DEMO_KMEMCACHE,
+	DEMO_KMEMCACHE_RECLAIM,
+	DEMO_ENTRY_MAX,
+};
+
+static char *string[DEMO_ENTRY_MAX] = {
+	"kmalloc_4KB",
+	"kmalloc_4KB_reclaim",
+	"kmalloc_4MB",
+	"kmalloc_4MB_reclaim",
+	"kmemcache",
+	"kmemcache_reclaim",
+};
+
+static enum demo_entry test_demo_entry(char *entry)
+{
+	int i;
+
+	if (!entry)
+		return 0;
+
+	for (i = 0; i < DEMO_ENTRY_MAX; i++) {
+		if (!strncmp(entry, string[i], strlen(entry)))
+			return i;
+	}
+
+	pr_info("Don't look for right demo entry.\n");
+	return -EINVAL;
+}
+
 static void test_kmalloc(unsigned int per_size, gfp_t flags)
 {
 	int nr = TATOL_SIZE / per_size;
@@ -56,45 +95,6 @@ static void test_kmemcache_free(void)
 
 	kfree(buf);
 }
-
-enum demo_entry {
-	DEMO_KMALLOC_4KB,
-	DEMO_KMALLOC_4KB_RECLAIM,
-	DEMO_KMALLOC_4MB,
-	DEMO_KMALLOC_4MB_RECLAIM,
-	DEMO_KMEMCACHE,
-	DEMO_KMEMCACHE_RECLAIM,
-	DEMO_ENTRY_MAX,
-};
-
-static char *string[DEMO_ENTRY_MAX] = {
-	"kmalloc_4KB",
-	"kmalloc_4KB_reclaim",
-	"kmalloc_4MB",
-	"kmalloc_4MB_reclaim",
-	"kmemcache",
-	"kmemcache_reclaim",
-};
-
-static enum demo_entry test_demo_entry(char *entry)
-{
-	int i;
-
-	if (!entry)
-		return DEMO_KMALLOC_4KB;
-
-	for (i = 0; i < DEMO_ENTRY_MAX; i++) {
-		if (!strncmp(entry, string[i], strlen(entry)))
-			return i;
-	}
-
-	pr_info("Don't look for right demo entry.\n");
-	return -EINVAL;
-}
-
-static char *demo_entry = "kmalloc_4KB";
-module_param(demo_entry, charp, 0444);
-MODULE_PARM_DESC(demo_entry, "A demo entry string");
 
 static int __init slab_init(void)
 {

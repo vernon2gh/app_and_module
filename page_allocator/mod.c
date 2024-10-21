@@ -8,6 +8,39 @@
 
 static void **buf;
 
+static char *demo_entry = "alloc_page_4KB";
+module_param(demo_entry, charp, 0444);
+MODULE_PARM_DESC(demo_entry, "A demo entry string");
+
+enum demo_entry {
+	DEMO_ALLOC_PAGE_4KB,
+	DEMO_ALLOC_PAGE_4KB_RECLAIM,
+	DEMO_ALLOC_PAGE_4MB,
+	DEMO_ENTRY_MAX,
+};
+
+static char *string[DEMO_ENTRY_MAX] = {
+	"alloc_page_4KB",
+	"alloc_page_4KB_reclaim",
+	"alloc_page_4MB",
+};
+
+static enum demo_entry test_demo_entry(char *entry)
+{
+	int i;
+
+	if (!entry)
+		return 0;
+
+	for (i = 0; i < DEMO_ENTRY_MAX; i++) {
+		if (!strncmp(entry, string[i], strlen(entry)))
+			return i;
+	}
+
+	pr_info("Don't look for right demo entry.\n");
+	return -EINVAL;
+}
+
 static void test_alloc_page(unsigned int order, gfp_t flags)
 {
 	int size = PAGE_SIZE * (1 << order);
@@ -31,39 +64,6 @@ static void test_free_page(unsigned int order)
 
 	kfree(buf);
 }
-
-enum demo_entry {
-	DEMO_ALLOC_PAGE_4KB,
-	DEMO_ALLOC_PAGE_4KB_RECLAIM,
-	DEMO_ALLOC_PAGE_4MB,
-	DEMO_ENTRY_MAX,
-};
-
-static char *string[DEMO_ENTRY_MAX] = {
-	"alloc_page_4KB",
-	"alloc_page_4KB_reclaim",
-	"alloc_page_4MB",
-};
-
-static enum demo_entry test_demo_entry(char *entry)
-{
-	int i;
-
-	if (!entry)
-		return DEMO_ALLOC_PAGE_4KB;
-
-	for (i = 0; i < DEMO_ENTRY_MAX; i++) {
-		if (!strncmp(entry, string[i], strlen(entry)))
-			return i;
-	}
-
-	pr_info("Don't look for right demo entry.\n");
-	return -EINVAL;
-}
-
-static char *demo_entry = "alloc_page_4KB";
-module_param(demo_entry, charp, 0444);
-MODULE_PARM_DESC(demo_entry, "A demo entry string");
 
 static int __init page_init(void)
 {

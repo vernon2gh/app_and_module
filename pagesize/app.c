@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <string.h>
+#include <errno.h>
 #include <sys/mman.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -13,6 +14,34 @@
 #define pr_debug(fmt, ...)
 #endif
 
+enum demo_entry {
+	DEMO_MALLOC,
+	DEMO_MMAP_ANON,
+	DEMO_MMAP_FILE,
+	DEMO_ENTRY_MAX,
+};
+
+static char *string[DEMO_ENTRY_MAX] = {
+	"malloc",
+	"mmap_anon",
+	"mmap_file",
+};
+
+static enum demo_entry test_demo_entry(char *entry)
+{
+	int i;
+
+	if (!entry)
+		return 0;
+
+	for (i = 0; i < DEMO_ENTRY_MAX; i++) {
+		if (!strncmp(entry, string[i], strlen(entry)))
+			return i;
+	}
+
+	printf("Don't look for right demo entry.\n");
+	return -EINVAL;
+}
 
 /*
  * Use the following command to count the consumption time of pagefaults for
@@ -72,15 +101,18 @@ int main(int argc, char *argv[])
 {
 	printf("PAGESIZE %d\n", getpagesize());
 
-	if (!argv[1])
-		goto DEFAULT;
-
-	if (!strncmp(argv[1], "mmap_anon", strlen("mmap_anon")))
-		test_mmap_anon();
-	else if (!strncmp(argv[1], "mmap_file", strlen("mmap_file")))
-		test_mmap_file();
-	else
-DEFAULT:	test_malloc();
+	switch (test_demo_entry(argv[1])) {
+		default:
+		case DEMO_MALLOC:
+			test_malloc();
+			break;
+		case DEMO_MMAP_ANON:
+			test_mmap_anon();
+			break;
+		case DEMO_MMAP_FILE:
+			test_mmap_file();
+			break;
+	}
 
 	return 0;
 }

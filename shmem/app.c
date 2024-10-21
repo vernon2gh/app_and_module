@@ -2,11 +2,39 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <string.h>
+#include <errno.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
+
+enum demo_entry {
+	DEMO_POSIX,
+	DEMO_SYSV,
+	DEMO_ENTRY_MAX,
+};
+
+static char *string[DEMO_ENTRY_MAX] = {
+	"posix",
+	"sysv",
+};
+
+static enum demo_entry test_demo_entry(char *entry)
+{
+	int i;
+
+	if (!entry)
+		return 0;
+
+	for (i = 0; i < DEMO_ENTRY_MAX; i++) {
+		if (!strncmp(entry, string[i], strlen(entry)))
+			return i;
+	}
+
+	printf("Don't look for right demo entry.\n");
+	return -EINVAL;
+}
 
 static void test_posix_shmem(void)
 {
@@ -43,13 +71,15 @@ static void test_sysv_shmem(void)
 
 int main(int argc, char *argv[])
 {
-	if (!argv[1])
-		goto DEFAULT;
-
-	if (!strncmp(argv[1], "sysv", strlen("sysv")))
-		test_sysv_shmem();
-	else
-DEFAULT:	test_posix_shmem();
+	switch (test_demo_entry(argv[1])) {
+		default:
+		case DEMO_POSIX:
+			test_posix_shmem();
+			break;
+		case DEMO_SYSV:
+			test_sysv_shmem();
+			break;
+	}
 
 	return 0;
 }

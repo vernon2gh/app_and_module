@@ -2,6 +2,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <string.h>
+#include <errno.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
@@ -12,7 +13,40 @@
 
 static int pagesize;
 
-void swap_normal(void)
+enum demo_entry {
+	DEMO_NORMAL,
+	DEMO_NORMAL_FORK,
+	DEMO_NORMAL_PTHREAD,
+	DEMO_THP,
+	DEMO_MTHP,
+	DEMO_ENTRY_MAX,
+};
+
+static char *string[DEMO_ENTRY_MAX] = {
+	"normal",
+	"normal_fork",
+	"normal_pthread",
+	"thp",
+	"mthp",
+};
+
+static enum demo_entry test_demo_entry(char *entry)
+{
+	int i;
+
+	if (!entry)
+		return 0;
+
+	for (i = 0; i < DEMO_ENTRY_MAX; i++) {
+		if (!strncmp(entry, string[i], strlen(entry)))
+			return i;
+	}
+
+	printf("Don't look for right demo entry.\n");
+	return -EINVAL;
+}
+
+static void swap_normal(void)
 {
 	char *buf;
 
@@ -35,7 +69,7 @@ void swap_normal(void)
 	trace_exit();
 }
 
-void swap_normal_fork(void)
+static void swap_normal_fork(void)
 {
 	char *buf;
 	pid_t pid;
@@ -78,7 +112,7 @@ static void *thread_fun(void *param)
  	return NULL;
 }
 
-void swap_normal_pthread(void)
+static void swap_normal_pthread(void)
 {
 	char *buf;
 	pthread_t tid1, tid2;
@@ -124,12 +158,12 @@ static void __swap_thp(void *start_vaddr, int pagenum)
 	munmap(buf, pagesize * pagenum);
 }
 
-void swap_thp(void)
+static void swap_thp(void)
 {
 	__swap_thp((void *)0x7f987f200000, 512);
 }
 
-void swap_multi_size_thp(void)
+static void swap_multi_size_thp(void)
 {
 	__swap_thp((void *)0x7f9877ff0000, 16);
 }
@@ -140,21 +174,24 @@ int main(int argc, char *argv[])
 
 	pagesize = getpagesize();
 
-	if (!argv[1])
-		goto DEFAULT;
-
-	if (!strncmp(argv[1], "normal", strlen(argv[1])))
-DEFAULT:	swap_normal();
-	else if (!strncmp(argv[1], "normal_fork", strlen(argv[1])))
-		swap_normal_fork();
-	else if (!strncmp(argv[1], "normal_pthread", strlen(argv[1])))
-		swap_normal_pthread();
-	else if (!strncmp(argv[1], "thp", strlen(argv[1])))
-		swap_thp();
-	else if (!strncmp(argv[1], "mthp", strlen(argv[1])))
-		swap_multi_size_thp();
-	else
-		goto DEFAULT;
+	switch (test_demo_entry(argv[1])) {
+		default:
+		case DEMO_NORMAL:
+			swap_normal();
+			break;
+		case DEMO_NORMAL_FORK:
+			swap_normal_fork();
+			break;
+		case DEMO_NORMAL_PTHREAD:
+			swap_normal_pthread();
+			break;
+		case DEMO_THP:
+			swap_thp();
+			break;
+		case DEMO_MTHP:
+			swap_multi_size_thp();
+			break;
+	}
 
 	dynamic_debug_end();
 

@@ -2,6 +2,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <string.h>
+#include <errno.h>
 #include <sys/mman.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -9,6 +10,37 @@
 #include "trace.h"
 
 static int pagesize;
+
+enum demo_entry {
+	DEMO_PRIVATE_ANON,
+	DEMO_SHARE_ANON,
+	DEMO_PRIVATE_FILE,
+	DEMO_SHARE_FILE,
+	DEMO_ENTRY_MAX,
+};
+
+static char *string[DEMO_ENTRY_MAX] = {
+	"private_anon",
+	"share_anon",
+	"private_file",
+	"share_file",
+};
+
+static enum demo_entry test_demo_entry(char *entry)
+{
+	int i;
+
+	if (!entry)
+		return 0;
+
+	for (i = 0; i < DEMO_ENTRY_MAX; i++) {
+		if (!strncmp(entry, string[i], strlen(entry)))
+			return i;
+	}
+
+	printf("Don't look for right demo entry.\n");
+	return -EINVAL;
+}
 
 static void test_private_anon(void)
 {
@@ -84,19 +116,21 @@ int main(int argc, char *argv[])
 	trace_configure(getpid(), "get_unmapped_area");
 	pagesize = getpagesize();
 
-	if (!argv[1])
-		goto DEFAULT;
-
-	if (!strncmp(argv[1], "private_anon", strlen("private_anon")))
-		goto DEFAULT;
-	else if (!strncmp(argv[1], "share_anon", strlen("share_anon")))
-		test_share_anon();
-	else if (!strncmp(argv[1], "private_file", strlen("private_file")))
-		test_private_file();
-	else if (!strncmp(argv[1], "share_file", strlen("share_file")))
-		test_share_file();
-	else
-DEFAULT:	test_private_anon();
+	switch (test_demo_entry(argv[1])) {
+		default:
+		case DEMO_PRIVATE_ANON:
+			test_private_anon();
+			break;
+		case DEMO_SHARE_ANON:
+			test_share_anon();
+			break;
+		case DEMO_PRIVATE_FILE:
+			test_private_file();
+			break;
+		case DEMO_SHARE_FILE:
+			test_share_file();
+			break;
+	}
 
 	trace_exit();
 	dynamic_debug_end();
