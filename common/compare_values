@@ -16,7 +16,7 @@ function abs(x) {
 	split(array[2], right, " ");
 	val2 = right[column];
 
-	if (abs(val2 - val1) > delta)
+	if (abs(val2 - val1) >= delta)
 		print $0;
 }
 '
