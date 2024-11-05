@@ -17,6 +17,7 @@ enum demo_entry {
 	DEMO_NORMAL,
 	DEMO_NORMAL_FORK,
 	DEMO_NORMAL_PTHREAD,
+	DEMO_NORMAL_PSWPIN_PSWPOUT,
 	DEMO_THP,
 	DEMO_MTHP,
 	DEMO_ENTRY_MAX,
@@ -26,6 +27,7 @@ static char *string[DEMO_ENTRY_MAX] = {
 	"normal",
 	"normal_fork",
 	"normal_pthread",
+	"normal_pswpin_pswpout",
 	"thp",
 	"mthp",
 };
@@ -138,6 +140,24 @@ static void swap_normal_pthread(void)
 	trace_exit();
 }
 
+static void swap_normal_pswpin_pswpout(void)
+{
+	char *buf;
+	char tmp;
+	int i, nr = 10000;
+
+	buf = mmap(0, pagesize * nr, PROT_READ | PROT_WRITE,
+		   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+
+	for (i = 0; i < nr; i++) {
+		buf[pagesize * i] = 't';
+		madvise(buf + pagesize * i, pagesize, MADV_PAGEOUT);
+		tmp = buf[pagesize * i];
+	}
+
+	munmap(buf, pagesize * nr);
+}
+
 static void __swap_thp(void *start_vaddr, int pagenum)
 {
 	char *buf;
@@ -184,6 +204,9 @@ int main(int argc, char *argv[])
 			break;
 		case DEMO_NORMAL_PTHREAD:
 			swap_normal_pthread();
+			break;
+		case DEMO_NORMAL_PSWPIN_PSWPOUT:
+			swap_normal_pswpin_pswpout();
 			break;
 		case DEMO_THP:
 			swap_thp();

@@ -10,8 +10,10 @@ fi
 
 swapon $SWAPFILE
 
+cat /proc/vmstat   > origin_vmstat.txt
 ./a.out $1
+cat /proc/vmstat   > access_vmstat.txt
 
 swapoff $SWAPFILE
 cat /sys/kernel/tracing/trace > trace.txt
-cat /proc/vmstat | grep swp
+../common/compare_values origin_vmstat.txt access_vmstat.txt 2 10000

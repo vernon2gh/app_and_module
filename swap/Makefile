@@ -10,4 +10,4 @@ all:
 	$(CROSS_COMPILE)gcc --static -I$(COMMON) $(APP)
 
 clean:
-	rm -fr a.out trace.txt
+	rm -fr a.out *.txt

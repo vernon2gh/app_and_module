@@ -14,7 +14,9 @@ fi
 
 swapon /dev/zram0
 
+cat /proc/vmstat   > origin_vmstat.txt
 ./a.out $1
+cat /proc/vmstat   > access_vmstat.txt
 
 if [ $WB = "true" ]; then
 	## default block state
@@ -31,4 +33,4 @@ fi
 
 swapoff /dev/zram0
 cat /sys/kernel/tracing/trace > trace.txt
-cat /proc/vmstat | grep swp
+../common/compare_values origin_vmstat.txt access_vmstat.txt 2 10000
