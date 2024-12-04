@@ -3,6 +3,7 @@
 #include <linux/gfp.h>
 #include <linux/mm.h>
 #include <asm/set_memory.h>
+#include <asm/io.h>
 
 #define TATOL_SIZE	(100 * 1024 * 1024)
 #define ORDER_4KB	0
@@ -63,18 +64,51 @@ static void test_alloc_page_cache(unsigned int order, gfp_t flags)
 	int nr = TATOL_SIZE / size;
 	int i = 0;
 	int tmp;
+	void *addr;
 
 	buf = kmalloc(nr * sizeof(void *), GFP_KERNEL|__GFP_ZERO);
 
 	buf[i] = alloc_pages(flags, order);
 	i++;
 
+#ifdef CONFIG_X86_64
 	buf[i] = alloc_pages(flags, order);
 	set_pages_uc(buf[i], 1 << order);
 	i++;
 
 	buf[i] = alloc_pages(flags, order);
 	set_pages_wb(buf[i], 1 << order);
+	i++;
+#endif
+
+	buf[i] = alloc_pages(flags, order);
+	addr = ioremap(page_to_phys((struct page *)buf[i]), PAGE_SIZE);
+	if (addr == NULL)
+		pr_info("ioremap failed.\n");
+	i++;
+
+	buf[i] = alloc_pages(flags, order);
+	addr = ioremap_cache(page_to_phys((struct page *)buf[i]), PAGE_SIZE);
+	if (addr == NULL)
+		pr_info("ioremap_cache failed.\n");
+	i++;
+
+	buf[i] = alloc_pages(flags, order);
+	addr = ioremap_uc(page_to_phys((struct page *)buf[i]), PAGE_SIZE);
+	if (addr == NULL)
+		pr_info("ioremap_uc failed.\n");
+	i++;
+
+	buf[i] = alloc_pages(flags, order);
+	addr = ioremap_wc(page_to_phys((struct page *)buf[i]), PAGE_SIZE);
+	if (addr == NULL)
+		pr_info("ioremap_wc failed.\n");
+	i++;
+
+	buf[i] = alloc_pages(flags, order);
+	addr = ioremap_wt(page_to_phys((struct page *)buf[i]), PAGE_SIZE);
+	if (addr == NULL)
+		pr_info("ioremap_wt failed.\n");
 	i++;
 
 	for (tmp = i, i = 0; i < tmp; i++)
