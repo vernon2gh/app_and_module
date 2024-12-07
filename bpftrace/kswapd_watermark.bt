@@ -1,0 +1,7 @@
+#!/usr/bin/bpftrace
+
+kprobe:__zone_watermark_ok
+{
+	printf("zone name %s, order %u, mark %lu, highest_zoneidx %d, alloc_flags %u, free_pages %ld\n",
+		str(((struct zone *)arg0)->name), arg1, arg2, arg3, arg4, arg5);
+}
