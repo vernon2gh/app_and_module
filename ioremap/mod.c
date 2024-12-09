@@ -105,7 +105,9 @@ static void test_iounmap_from_normal_memory(unsigned int order)
 }
 
 /*
- * arm64 device tree:
+ * reserve memory range: [2G, 2G+100M]
+ *
+ * 1. arm64 device tree, e.g.
  *
  * memory@40000000 {
  * 	reg = <0x00 0x40000000 0x02 0x00>;
@@ -123,8 +125,9 @@ static void test_iounmap_from_normal_memory(unsigned int order)
  * 	};
  * };
  *
- * x86_64 bootargs:
+ * 2. x86_64 bootargs, e.g.
  *
+ * memmap=100M$2G or memmap=0x6400000$0x80000000
  */
 static void test_ioremap_from_reserve_memory(void)
 {
