@@ -109,11 +109,6 @@ static void test_iounmap_from_normal_memory(unsigned int order)
  *
  * 1. arm64 device tree, e.g.
  *
- * memory@40000000 {
- * 	reg = <0x00 0x40000000 0x02 0x00>;
- * 	device_type = "memory";
- * };
- *
  * reserved-memory {
  * 	#size-cells = <0x02>;
  * 	#address-cells = <0x02>;
