@@ -8,10 +8,13 @@ if [ $# -ne 2 ]; then
 	exit 1
 fi
 
+addr=$(printf "%u\n" "$addr")
+if [ $addr == 0 ]; then
+	exit
+fi
+
 cat $file > local_file.txt
 file=local_file.txt
-
-addr=$(printf "%u\n" "$addr")
 
 while read line; do
 	range=$(echo $line | awk '{print $1}')
