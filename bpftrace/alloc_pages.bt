@@ -1,0 +1,13 @@
+#!/usr/bin/bpftrace
+
+kprobe:alloc_pages_noprof /pid == cpid/ {
+	@start[tid] = nsecs;
+}
+
+kretprobe:alloc_pages_noprof /@start[tid]/ {
+	@delta = (nsecs - @start[tid]) / 1000;
+	@us[comm] = hist(@delta);
+	@total_us[comm] += @delta;
+	delete(@delta);
+	delete(@start[tid]);
+}
