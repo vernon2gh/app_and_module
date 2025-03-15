@@ -1,0 +1,13 @@
+diff --git a/examples/c/Makefile b/examples/c/Makefile
+index 6a82f26..59f9ae8 100644
+--- a/examples/c/Makefile
++++ b/examples/c/Makefile
+@@ -24,7 +24,7 @@ INCLUDES := -I$(OUTPUT) -I../../libbpf/include/uapi -I$(dir $(VMLINUX)) -I$(LIBB
+ CFLAGS := -g -Wall
+ ALL_LDFLAGS := $(LDFLAGS) $(EXTRA_LDFLAGS)
+ 
+-APPS = minimal minimal_legacy minimal_ns bootstrap uprobe kprobe fentry \
++APPS = execve minimal minimal_legacy minimal_ns bootstrap uprobe kprobe fentry \
+        usdt sockfilter tc ksyscall task_iter lsm
+ 
+ CARGO ?= $(shell which cargo)

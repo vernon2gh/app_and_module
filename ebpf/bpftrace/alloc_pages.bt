@@ -1,10 +1,12 @@
 #!/usr/bin/bpftrace
 
-kprobe:try_to_free_pages /pid == cpid/ {
+kprobe:alloc_pages_noprof /pid == cpid/
+{
 	@start[tid] = nsecs;
 }
 
-kretprobe:try_to_free_pages /@start[tid]/ {
+kretprobe:alloc_pages_noprof /@start[tid]/
+{
 	@delta = (nsecs - @start[tid]) / 1000;
 	@us[comm] = hist(@delta);
 	@total_us[comm] += @delta;

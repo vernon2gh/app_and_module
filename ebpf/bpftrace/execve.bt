@@ -1,0 +1,16 @@
+#!/usr/bin/bpftrace
+
+BEGIN
+{
+	printf("start.\n");
+}
+
+tracepoint:syscalls:sys_enter_execve
+{
+	printf("hello bpftrace!\n");
+}
+
+END
+{
+	printf("end.\n");
+}

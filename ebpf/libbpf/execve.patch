@@ -1,0 +1,28 @@
+diff --git a/samples/bpf/Makefile b/samples/bpf/Makefile
+index 7afe040cf43b..733199909985 100644
+--- a/samples/bpf/Makefile
++++ b/samples/bpf/Makefile
+@@ -13,6 +13,7 @@ tprogs-y += sockex1
+ tprogs-y += sockex2
+ tprogs-y += sockex3
+ tprogs-y += tracex1
++tprogs-y += execve
+ tprogs-y += tracex3
+ tprogs-y += tracex4
+ tprogs-y += tracex5
+@@ -62,6 +63,7 @@ sockex1-objs := sockex1_user.o
+ sockex2-objs := sockex2_user.o
+ sockex3-objs := sockex3_user.o
+ tracex1-objs := tracex1_user.o $(TRACE_HELPERS)
++execve-objs := execve.o $(TRACE_HELPERS)
+ tracex3-objs := tracex3_user.o
+ tracex4-objs := tracex4_user.o
+ tracex5-objs := tracex5_user.o $(TRACE_HELPERS)
+@@ -103,6 +105,7 @@ always-y += sockex1_kern.o
+ always-y += sockex2_kern.o
+ always-y += sockex3_kern.o
+ always-y += tracex1.bpf.o
++always-y += execve.bpf.o
+ always-y += tracex3.bpf.o
+ always-y += tracex4.bpf.o
+ always-y += tracex5.bpf.o
