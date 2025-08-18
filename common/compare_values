@@ -17,6 +17,6 @@ function abs(x) {
 	val2 = right[column];
 
 	if (abs(val2 - val1) >= delta)
-		print $0;
+		print $0, ", delta " abs(val2-val1);
 }
 '
