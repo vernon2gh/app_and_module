@@ -1,0 +1,942 @@
+From 50824073ec9a1414ee1e262f737b896ec2b4c829 Mon Sep 17 00:00:00 2001
+From: Vernon Yang <vernon2gm@gmail.com>
+Date: Tue, 28 Oct 2025 21:08:08 +0800
+Subject: [PATCH] Add mem_ext
+
+Signed-off-by: Vernon Yang <vernon2gm@gmail.com>
+---
+ tools/mem_ext/.gitignore        |   2 +
+ tools/mem_ext/Makefile          | 257 ++++++++++++++++++++++++++++++
+ tools/mem_ext/README.md         | 270 ++++++++++++++++++++++++++++++++
+ tools/mem_ext/mthp_adjust.bpf.c |  21 +++
+ tools/mem_ext/mthp_adjust.c     | 196 +++++++++++++++++++++++
+ tools/mem_ext/mthp_event.bpf.c  |  52 ++++++
+ tools/mem_ext/mthp_event.c      |  76 +++++++++
+ 7 files changed, 874 insertions(+)
+ create mode 100644 tools/mem_ext/.gitignore
+ create mode 100644 tools/mem_ext/Makefile
+ create mode 100644 tools/mem_ext/README.md
+ create mode 100644 tools/mem_ext/mthp_adjust.bpf.c
+ create mode 100644 tools/mem_ext/mthp_adjust.c
+ create mode 100644 tools/mem_ext/mthp_event.bpf.c
+ create mode 100644 tools/mem_ext/mthp_event.c
+
+diff --git a/tools/mem_ext/.gitignore b/tools/mem_ext/.gitignore
+new file mode 100644
+index 000000000000..d6264fe1c8cd
+--- /dev/null
++++ b/tools/mem_ext/.gitignore
+@@ -0,0 +1,2 @@
++tools/
++build/
+diff --git a/tools/mem_ext/Makefile b/tools/mem_ext/Makefile
+new file mode 100644
+index 000000000000..ee7b786a33e0
+--- /dev/null
++++ b/tools/mem_ext/Makefile
+@@ -0,0 +1,257 @@
++# SPDX-License-Identifier: GPL-2.0
++# Copyright (c) 2022 Meta Platforms, Inc. and affiliates.
++include ../build/Build.include
++include ../scripts/Makefile.arch
++include ../scripts/Makefile.include
++
++all: all_targets
++
++ifneq ($(LLVM),)
++ifneq ($(filter %/,$(LLVM)),)
++LLVM_PREFIX := $(LLVM)
++else ifneq ($(filter -%,$(LLVM)),)
++LLVM_SUFFIX := $(LLVM)
++endif
++
++CLANG_TARGET_FLAGS_arm          := arm-linux-gnueabi
++CLANG_TARGET_FLAGS_arm64        := aarch64-linux-gnu
++CLANG_TARGET_FLAGS_hexagon      := hexagon-linux-musl
++CLANG_TARGET_FLAGS_m68k         := m68k-linux-gnu
++CLANG_TARGET_FLAGS_mips         := mipsel-linux-gnu
++CLANG_TARGET_FLAGS_powerpc      := powerpc64le-linux-gnu
++CLANG_TARGET_FLAGS_riscv        := riscv64-linux-gnu
++CLANG_TARGET_FLAGS_s390         := s390x-linux-gnu
++CLANG_TARGET_FLAGS_x86          := x86_64-linux-gnu
++CLANG_TARGET_FLAGS              := $(CLANG_TARGET_FLAGS_$(ARCH))
++
++ifeq ($(CROSS_COMPILE),)
++ifeq ($(CLANG_TARGET_FLAGS),)
++$(error Specify CROSS_COMPILE or add '--target=' option to lib.mk)
++else
++CLANG_FLAGS     += --target=$(CLANG_TARGET_FLAGS)
++endif # CLANG_TARGET_FLAGS
++else
++CLANG_FLAGS     += --target=$(notdir $(CROSS_COMPILE:%-=%))
++endif # CROSS_COMPILE
++
++CC := $(LLVM_PREFIX)clang$(LLVM_SUFFIX) $(CLANG_FLAGS) -fintegrated-as
++else
++CC := $(CROSS_COMPILE)gcc
++endif # LLVM
++
++CURDIR := $(abspath .)
++TOOLSDIR := $(abspath ..)
++LIBDIR := $(TOOLSDIR)/lib
++BPFDIR := $(LIBDIR)/bpf
++TOOLSINCDIR := $(TOOLSDIR)/include
++BPFTOOLDIR := $(TOOLSDIR)/bpf/bpftool
++APIDIR := $(TOOLSINCDIR)/uapi
++GENDIR := $(abspath ../../include/generated)
++GENHDR := $(GENDIR)/autoconf.h
++
++ifeq ($(O),)
++OUTPUT_DIR := $(CURDIR)/build
++else
++OUTPUT_DIR := $(O)/build
++endif # O
++OBJ_DIR := $(OUTPUT_DIR)/obj
++INCLUDE_DIR := $(OUTPUT_DIR)/include
++BPFOBJ_DIR := $(OBJ_DIR)/libbpf
++MEMOBJ_DIR := $(OBJ_DIR)/mem_ext
++BINDIR := $(OUTPUT_DIR)/bin
++BPFOBJ := $(BPFOBJ_DIR)/libbpf.a
++ifneq ($(CROSS_COMPILE),)
++HOST_BUILD_DIR		:= $(OBJ_DIR)/host/obj
++HOST_OUTPUT_DIR	:= $(OBJ_DIR)/host
++HOST_INCLUDE_DIR	:= $(HOST_OUTPUT_DIR)/include
++else
++HOST_BUILD_DIR		:= $(OBJ_DIR)
++HOST_OUTPUT_DIR	:= $(OUTPUT_DIR)
++HOST_INCLUDE_DIR	:= $(INCLUDE_DIR)
++endif
++HOST_BPFOBJ := $(HOST_BUILD_DIR)/libbpf/libbpf.a
++RESOLVE_BTFIDS := $(HOST_BUILD_DIR)/resolve_btfids/resolve_btfids
++DEFAULT_BPFTOOL := $(HOST_OUTPUT_DIR)/sbin/bpftool
++
++VMLINUX_BTF_PATHS ?= $(if $(O),$(O)/vmlinux)					\
++		     $(if $(KBUILD_OUTPUT),$(KBUILD_OUTPUT)/vmlinux)		\
++		     ../../vmlinux						\
++		     /sys/kernel/btf/vmlinux					\
++		     /boot/vmlinux-$(shell uname -r)
++VMLINUX_BTF ?= $(abspath $(firstword $(wildcard $(VMLINUX_BTF_PATHS))))
++ifeq ($(VMLINUX_BTF),)
++$(error Cannot find a vmlinux for VMLINUX_BTF at any of "$(VMLINUX_BTF_PATHS)")
++endif
++
++BPFTOOL ?= $(DEFAULT_BPFTOOL)
++
++ifneq ($(wildcard $(GENHDR)),)
++  GENFLAGS := -DHAVE_GENHDR
++endif
++
++CFLAGS += -g -O2 -rdynamic -pthread -Wall -Werror $(GENFLAGS)			\
++	  -I$(INCLUDE_DIR) -I$(GENDIR) -I$(LIBDIR)				\
++	  -I$(TOOLSINCDIR) -I$(APIDIR) -I$(CURDIR)/include
++
++# Silence some warnings when compiled with clang
++ifneq ($(LLVM),)
++CFLAGS += -Wno-unused-command-line-argument
++endif
++
++LDFLAGS += -lelf -lz -lpthread
++
++IS_LITTLE_ENDIAN = $(shell $(CC) -dM -E - </dev/null |				\
++			grep 'define __BYTE_ORDER__ __ORDER_LITTLE_ENDIAN__')
++
++# Get Clang's default includes on this system, as opposed to those seen by
++# '-target bpf'. This fixes "missing" files on some architectures/distros,
++# such as asm/byteorder.h, asm/socket.h, asm/sockios.h, sys/cdefs.h etc.
++#
++# Use '-idirafter': Don't interfere with include mechanics except where the
++# build would have failed anyways.
++define get_sys_includes
++$(shell $(1) -v -E - </dev/null 2>&1 \
++	| sed -n '/<...> search starts here:/,/End of search list./{ s| \(/.*\)|-idirafter \1|p }') \
++$(shell $(1) -dM -E - </dev/null | grep '__riscv_xlen ' | awk '{printf("-D__riscv_xlen=%d -D__BITS_PER_LONG=%d", $$3, $$3)}')
++endef
++
++BPF_CFLAGS = -g -D__TARGET_ARCH_$(SRCARCH)					\
++	     $(if $(IS_LITTLE_ENDIAN),-mlittle-endian,-mbig-endian)		\
++	     -I$(CURDIR)/include -I$(CURDIR)/include/bpf-compat			\
++	     -I$(INCLUDE_DIR) -I$(APIDIR)					\
++	     -I../../include							\
++	     $(call get_sys_includes,$(CLANG))					\
++	     -Wall -Wno-compare-distinct-pointer-types				\
++	     -O2 -mcpu=v3
++
++# sort removes libbpf duplicates when not cross-building
++MAKE_DIRS := $(sort $(OBJ_DIR)/libbpf $(HOST_BUILD_DIR)/libbpf			\
++	       $(HOST_BUILD_DIR)/bpftool $(HOST_BUILD_DIR)/resolve_btfids	\
++	       $(INCLUDE_DIR) $(MEMOBJ_DIR) $(BINDIR))
++
++$(MAKE_DIRS):
++	$(call msg,MKDIR,,$@)
++	$(Q)mkdir -p $@
++
++$(BPFOBJ): $(wildcard $(BPFDIR)/*.[ch] $(BPFDIR)/Makefile)			\
++	   $(APIDIR)/linux/bpf.h						\
++	   | $(OBJ_DIR)/libbpf
++	$(Q)$(MAKE) $(submake_extras) CROSS_COMPILE=$(CROSS_COMPILE) 		\
++		    -C $(BPFDIR) OUTPUT=$(OBJ_DIR)/libbpf/			\
++		    EXTRA_CFLAGS='-g -O0 -fPIC'					\
++		    LDFLAGS="$(LDFLAGS)"					\
++		    DESTDIR=$(OUTPUT_DIR) prefix= all install_headers
++
++$(HOST_BPFOBJ): $(wildcard $(BPFDIR)/*.[ch] $(BPFDIR)/Makefile)		\
++	   $(APIDIR)/linux/bpf.h						\
++	   | $(HOST_BUILD_DIR)/libbpf
++	$(Q)$(MAKE) $(submake_extras) -C $(BPFDIR) 				\
++		    OUTPUT=$(HOST_BUILD_DIR)/libbpf/				\
++		    ARCH= CROSS_COMPILE= CC="$(HOSTCC)" LD=$(HOSTLD)		\
++		    EXTRA_CFLAGS='-g -O0 -fPIC'					\
++		    DESTDIR=$(HOST_OUTPUT_DIR) prefix= all install_headers
++
++$(DEFAULT_BPFTOOL): $(wildcard $(BPFTOOLDIR)/*.[ch] $(BPFTOOLDIR)/Makefile)	\
++		    $(HOST_BPFOBJ) | $(HOST_BUILD_DIR)/bpftool
++	$(Q)$(MAKE) $(submake_extras)  -C $(BPFTOOLDIR)				\
++		    ARCH= CROSS_COMPILE= CC="$(HOSTCC)" LD=$(HOSTLD)		\
++		    EXTRA_CFLAGS='-g -O0'					\
++		    OUTPUT=$(HOST_BUILD_DIR)/bpftool/				\
++		    LIBBPF_OUTPUT=$(HOST_BUILD_DIR)/libbpf/			\
++		    LIBBPF_DESTDIR=$(HOST_OUTPUT_DIR)/				\
++		    prefix= DESTDIR=$(HOST_OUTPUT_DIR)/ install-bin
++
++$(INCLUDE_DIR)/vmlinux.h: $(VMLINUX_BTF) $(BPFTOOL) | $(INCLUDE_DIR)
++ifeq ($(VMLINUX_H),)
++	$(call msg,GEN,,$@)
++	$(Q)$(BPFTOOL) btf dump file $(VMLINUX_BTF) format c > $@
++else
++	$(call msg,CP,,$@)
++	$(Q)cp "$(VMLINUX_H)" $@
++endif
++
++$(MEMOBJ_DIR)/%.bpf.o: %.bpf.c $(INCLUDE_DIR)/vmlinux.h		\
++		       | $(BPFOBJ) $(MEMOBJ_DIR)
++	$(call msg,CLNG-BPF,,$(notdir $@))
++	$(Q)$(CLANG) $(BPF_CFLAGS) -target bpf -c $< -o $@
++
++$(INCLUDE_DIR)/%.bpf.skel.h: $(MEMOBJ_DIR)/%.bpf.o $(INCLUDE_DIR)/vmlinux.h $(BPFTOOL)
++	$(eval mem=$(notdir $@))
++	$(call msg,GEN-SKEL,,$(mem))
++	$(Q)$(BPFTOOL) gen object $(<:.o=.linked1.o) $<
++	$(Q)$(BPFTOOL) gen object $(<:.o=.linked2.o) $(<:.o=.linked1.o)
++	$(Q)$(BPFTOOL) gen object $(<:.o=.linked3.o) $(<:.o=.linked2.o)
++	$(Q)diff $(<:.o=.linked2.o) $(<:.o=.linked3.o)
++	$(Q)$(BPFTOOL) gen skeleton $(<:.o=.linked3.o) name $(subst .bpf.skel.h,,$(mem)) > $@
++	$(Q)$(BPFTOOL) gen subskeleton $(<:.o=.linked3.o) name $(subst .bpf.skel.h,,$(mem)) > $(@:.skel.h=.subskel.h)
++
++MEM_COMMON_DEPS := | $(BINDIR)
++
++c-mem-targets = mthp_event mthp_adjust
++
++$(addprefix $(BINDIR)/,$(c-mem-targets)): \
++	$(BINDIR)/%: \
++		$(filter-out %.bpf.c,%.c) \
++		$(INCLUDE_DIR)/%.bpf.skel.h \
++		$(MEM_COMMON_DEPS)
++	$(eval mem=$(notdir $@))
++	$(CC) $(CFLAGS) -c $(mem).c -o $(MEMOBJ_DIR)/$(mem).o
++	$(CC) -o $@ $(MEMOBJ_DIR)/$(mem).o $(BPFOBJ) $(LDFLAGS)
++
++$(c-mem-targets): %: $(BINDIR)/%
++
++install: all
++	$(Q)mkdir -p $(DESTDIR)/usr/local/bin/
++	$(Q)cp $(BINDIR)/* $(DESTDIR)/usr/local/bin/
++
++clean:
++	rm -rf $(OUTPUT_DIR) $(HOST_OUTPUT_DIR)
++	rm -f *.o *.bpf.o *.bpf.skel.h *.bpf.subskel.h
++	rm -f $(c-mem-targets)
++
++help:
++	@echo   'Building targets'
++	@echo   '================'
++	@echo   ''
++	@echo   '  all		  - Compile all memory'
++	@echo   ''
++	@echo   'Alternatively, you may compile individual memory:'
++	@echo   ''
++	@printf '  %s\n' $(c-mem-targets)
++	@echo   ''
++	@echo   'For any memory build target, you may specify an alternative'
++	@echo   'build output path with the O= environment variable. For example:'
++	@echo   ''
++	@echo   '   O=/tmp/mem_ext make all'
++	@echo   ''
++	@echo   'will compile all memorys, and emit the build artifacts to'
++	@echo   '/tmp/mem_ext/build.'
++	@echo   ''
++	@echo   ''
++	@echo   'Installing targets'
++	@echo   '=================='
++	@echo   ''
++	@echo   '  install	  - Compile and install all memorys to /usr/bin.'
++	@echo   '		    You may specify the DESTDIR= environment variable'
++	@echo   '		    to indicate a prefix for /usr/bin. For example:'
++	@echo   ''
++	@echo   '                     DESTDIR=/tmp/mem_ext make install'
++	@echo   ''
++	@echo   '		    will build the memorys in CWD/build, and'
++	@echo   '		    install the memorys to /tmp/mem_ext/usr/bin.'
++	@echo   ''
++	@echo   ''
++	@echo   'Cleaning targets'
++	@echo   '================'
++	@echo   ''
++	@echo   '  clean		  - Remove all generated files'
++
++all_targets: $(c-mem-targets)
++
++.PHONY: all all_targets $(c-mem-targets) clean help
++
++# delete failed targets
++.DELETE_ON_ERROR:
++
++# keep intermediate (.bpf.skel.h, .bpf.o, etc) targets
++.SECONDARY:
+diff --git a/tools/mem_ext/README.md b/tools/mem_ext/README.md
+new file mode 100644
+index 000000000000..16a42e4060f6
+--- /dev/null
++++ b/tools/mem_ext/README.md
+@@ -0,0 +1,270 @@
++SCHED_EXT EXAMPLE SCHEDULERS
++============================
++
++# Introduction
++
++This directory contains a number of example sched_ext schedulers. These
++schedulers are meant to provide examples of different types of schedulers
++that can be built using sched_ext, and illustrate how various features of
++sched_ext can be used.
++
++Some of the examples are performant, production-ready schedulers. That is, for
++the correct workload and with the correct tuning, they may be deployed in a
++production environment with acceptable or possibly even improved performance.
++Others are just examples that in practice, would not provide acceptable
++performance (though they could be improved to get there).
++
++This README will describe these example schedulers, including describing the
++types of workloads or scenarios they're designed to accommodate, and whether or
++not they're production ready. For more details on any of these schedulers,
++please see the header comment in their .bpf.c file.
++
++
++# Compiling the examples
++
++There are a few toolchain dependencies for compiling the example schedulers.
++
++## Toolchain dependencies
++
++1. clang >= 16.0.0
++
++The schedulers are BPF programs, and therefore must be compiled with clang. gcc
++is actively working on adding a BPF backend compiler as well, but are still
++missing some features such as BTF type tags which are necessary for using
++kptrs.
++
++2. pahole >= 1.25
++
++You may need pahole in order to generate BTF from DWARF.
++
++3. rust >= 1.70.0
++
++Rust schedulers uses features present in the rust toolchain >= 1.70.0. You
++should be able to use the stable build from rustup, but if that doesn't
++work, try using the rustup nightly build.
++
++There are other requirements as well, such as make, but these are the main /
++non-trivial ones.
++
++## Compiling the kernel
++
++In order to run a sched_ext scheduler, you'll have to run a kernel compiled
++with the patches in this repository, and with a minimum set of necessary
++Kconfig options:
++
++```
++CONFIG_BPF=y
++CONFIG_SCHED_CLASS_EXT=y
++CONFIG_BPF_SYSCALL=y
++CONFIG_BPF_JIT=y
++CONFIG_DEBUG_INFO_BTF=y
++```
++
++It's also recommended that you also include the following Kconfig options:
++
++```
++CONFIG_BPF_JIT_ALWAYS_ON=y
++CONFIG_BPF_JIT_DEFAULT_ON=y
++CONFIG_PAHOLE_HAS_SPLIT_BTF=y
++CONFIG_PAHOLE_HAS_BTF_TAG=y
++```
++
++There is a `Kconfig` file in this directory whose contents you can append to
++your local `.config` file, as long as there are no conflicts with any existing
++options in the file.
++
++## Getting a vmlinux.h file
++
++You may notice that most of the example schedulers include a "vmlinux.h" file.
++This is a large, auto-generated header file that contains all of the types
++defined in some vmlinux binary that was compiled with
++[BTF](https://docs.kernel.org/bpf/btf.html) (i.e. with the BTF-related Kconfig
++options specified above).
++
++The header file is created using `bpftool`, by passing it a vmlinux binary
++compiled with BTF as follows:
++
++```bash
++$ bpftool btf dump file /path/to/vmlinux format c > vmlinux.h
++```
++
++`bpftool` analyzes all of the BTF encodings in the binary, and produces a
++header file that can be included by BPF programs to access those types.  For
++example, using vmlinux.h allows a scheduler to access fields defined directly
++in vmlinux as follows:
++
++```c
++#include "vmlinux.h"
++// vmlinux.h is also implicitly included by scx_common.bpf.h.
++#include "scx_common.bpf.h"
++
++/*
++ * vmlinux.h provides definitions for struct task_struct and
++ * struct scx_enable_args.
++ */
++void BPF_STRUCT_OPS(example_enable, struct task_struct *p,
++		    struct scx_enable_args *args)
++{
++	bpf_printk("Task %s enabled in example scheduler", p->comm);
++}
++
++// vmlinux.h provides the definition for struct sched_ext_ops.
++SEC(".struct_ops.link")
++struct sched_ext_ops example_ops {
++	.enable	= (void *)example_enable,
++	.name	= "example",
++}
++```
++
++The scheduler build system will generate this vmlinux.h file as part of the
++scheduler build pipeline. It looks for a vmlinux file in the following
++dependency order:
++
++1. If the O= environment variable is defined, at `$O/vmlinux`
++2. If the KBUILD_OUTPUT= environment variable is defined, at
++   `$KBUILD_OUTPUT/vmlinux`
++3. At `../../vmlinux` (i.e. at the root of the kernel tree where you're
++   compiling the schedulers)
++3. `/sys/kernel/btf/vmlinux`
++4. `/boot/vmlinux-$(uname -r)`
++
++In other words, if you have compiled a kernel in your local repo, its vmlinux
++file will be used to generate vmlinux.h. Otherwise, it will be the vmlinux of
++the kernel you're currently running on. This means that if you're running on a
++kernel with sched_ext support, you may not need to compile a local kernel at
++all.
++
++### Aside on CO-RE
++
++One of the cooler features of BPF is that it supports
++[CO-RE](https://nakryiko.com/posts/bpf-core-reference-guide/) (Compile Once Run
++Everywhere). This feature allows you to reference fields inside of structs with
++types defined internal to the kernel, and not have to recompile if you load the
++BPF program on a different kernel with the field at a different offset. In our
++example above, we print out a task name with `p->comm`. CO-RE would perform
++relocations for that access when the program is loaded to ensure that it's
++referencing the correct offset for the currently running kernel.
++
++## Compiling the schedulers
++
++Once you have your toolchain setup, and a vmlinux that can be used to generate
++a full vmlinux.h file, you can compile the schedulers using `make`:
++
++```bash
++$ make -j($nproc)
++```
++
++# Example schedulers
++
++This directory contains the following example schedulers. These schedulers are
++for testing and demonstrating different aspects of sched_ext. While some may be
++useful in limited scenarios, they are not intended to be practical.
++
++For more scheduler implementations, tools and documentation, visit
++https://github.com/sched-ext/scx.
++
++## scx_simple
++
++A simple scheduler that provides an example of a minimal sched_ext scheduler.
++scx_simple can be run in either global weighted vtime mode, or FIFO mode.
++
++Though very simple, in limited scenarios, this scheduler can perform reasonably
++well on single-socket systems with a unified L3 cache.
++
++## scx_qmap
++
++Another simple, yet slightly more complex scheduler that provides an example of
++a basic weighted FIFO queuing policy. It also provides examples of some common
++useful BPF features, such as sleepable per-task storage allocation in the
++`ops.prep_enable()` callback, and using the `BPF_MAP_TYPE_QUEUE` map type to
++enqueue tasks. It also illustrates how core-sched support could be implemented.
++
++## scx_central
++
++A "central" scheduler where scheduling decisions are made from a single CPU.
++This scheduler illustrates how scheduling decisions can be dispatched from a
++single CPU, allowing other cores to run with infinite slices, without timer
++ticks, and without having to incur the overhead of making scheduling decisions.
++
++The approach demonstrated by this scheduler may be useful for any workload that
++benefits from minimizing scheduling overhead and timer ticks. An example of
++where this could be particularly useful is running VMs, where running with
++infinite slices and no timer ticks allows the VM to avoid unnecessary expensive
++vmexits.
++
++## scx_flatcg
++
++A flattened cgroup hierarchy scheduler. This scheduler implements hierarchical
++weight-based cgroup CPU control by flattening the cgroup hierarchy into a single
++layer, by compounding the active weight share at each level. The effect of this
++is a much more performant CPU controller, which does not need to descend down
++cgroup trees in order to properly compute a cgroup's share.
++
++Similar to scx_simple, in limited scenarios, this scheduler can perform
++reasonably well on single socket-socket systems with a unified L3 cache and show
++significantly lowered hierarchical scheduling overhead.
++
++
++# Troubleshooting
++
++There are a number of common issues that you may run into when building the
++schedulers. We'll go over some of the common ones here.
++
++## Build Failures
++
++### Old version of clang
++
++```
++error: static assertion failed due to requirement 'SCX_DSQ_FLAG_BUILTIN': bpftool generated vmlinux.h is missing high bits for 64bit enums, upgrade clang and pahole
++        _Static_assert(SCX_DSQ_FLAG_BUILTIN,
++                       ^~~~~~~~~~~~~~~~~~~~
++1 error generated.
++```
++
++This means you built the kernel or the schedulers with an older version of
++clang than what's supported (i.e. older than 16.0.0). To remediate this:
++
++1. `which clang` to make sure you're using a sufficiently new version of clang.
++
++2. `make fullclean` in the root path of the repository, and rebuild the kernel
++   and schedulers.
++
++3. Rebuild the kernel, and then your example schedulers.
++
++The schedulers are also cleaned if you invoke `make mrproper` in the root
++directory of the tree.
++
++### Stale kernel build / incomplete vmlinux.h file
++
++As described above, you'll need a `vmlinux.h` file that was generated from a
++vmlinux built with BTF, and with sched_ext support enabled. If you don't,
++you'll see errors such as the following which indicate that a type being
++referenced in a scheduler is unknown:
++
++```
++/path/to/sched_ext/tools/sched_ext/user_exit_info.h:25:23: note: forward declaration of 'struct scx_exit_info'
++
++const struct scx_exit_info *ei)
++
++^
++```
++
++In order to resolve this, please follow the steps above in
++[Getting a vmlinux.h file](#getting-a-vmlinuxh-file) in order to ensure your
++schedulers are using a vmlinux.h file that includes the requisite types.
++
++## Misc
++
++### llvm: [OFF]
++
++You may see the following output when building the schedulers:
++
++```
++Auto-detecting system features:
++...                         clang-bpf-co-re: [ on  ]
++...                                    llvm: [ OFF ]
++...                                  libcap: [ on  ]
++...                                  libbfd: [ on  ]
++```
++
++Seeing `llvm: [ OFF ]` here is not an issue. You can safely ignore.
+diff --git a/tools/mem_ext/mthp_adjust.bpf.c b/tools/mem_ext/mthp_adjust.bpf.c
+new file mode 100644
+index 000000000000..0dc4d649b4c0
+--- /dev/null
++++ b/tools/mem_ext/mthp_adjust.bpf.c
+@@ -0,0 +1,21 @@
++// SPDX-License-Identifier: GPL-2.0
++
++#include "vmlinux.h"
++#include <bpf/bpf_helpers.h>
++#include <bpf/bpf_tracing.h>
++
++int order;
++
++SEC("struct_ops/thp_get_order")
++int BPF_PROG(mthp_get_order, struct vm_area_struct *vma, enum tva_type type,
++	     unsigned long orders)
++{
++	return order;
++}
++
++SEC(".struct_ops.link")
++struct bpf_thp_ops mthp_ops = {
++	.thp_get_order = (void *)mthp_get_order,
++};
++
++char _license[] SEC("license") = "GPL";
+diff --git a/tools/mem_ext/mthp_adjust.c b/tools/mem_ext/mthp_adjust.c
+new file mode 100644
+index 000000000000..24a539bcdc5f
+--- /dev/null
++++ b/tools/mem_ext/mthp_adjust.c
+@@ -0,0 +1,196 @@
++#include <stdio.h>
++#include <unistd.h>
++#include <sys/mman.h>
++#include <sys/resource.h>
++#include <bpf/libbpf.h>
++#include <linux/list.h>
++#include "mthp_event.bpf.skel.h"
++#include "mthp_adjust.bpf.skel.h"
++
++#define TASK_COMM_LEN	16
++
++struct event {
++	char comm[TASK_COMM_LEN];
++	int pid;
++	bool exit;
++};
++
++struct mthp_attach_info {
++	int pid;
++	struct mthp_adjust *skel;
++	struct bpf_link *link;
++
++	struct list_head list;
++};
++
++struct mthp_adjust_info {
++	char comm[TASK_COMM_LEN];
++	int order;
++
++	struct list_head head;
++};
++
++static struct mthp_adjust_info table[] = {
++	{ "a.out", 0, LIST_HEAD_INIT(table[0].head) },
++};
++
++static inline struct mthp_adjust_info *look_for_mthp_adjust_info(const char *comm)
++{
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(table); i++) {
++		if (!strcmp(comm, table[i].comm))
++			return &table[i];
++	}
++
++	return NULL;
++}
++
++static inline void save_attach_info(struct mthp_adjust_info *info, int pid,
++				struct mthp_adjust *skel, struct bpf_link *link)
++{
++	struct mthp_attach_info *attach_info;
++
++	attach_info = malloc(sizeof(struct mthp_attach_info));
++	if (attach_info == NULL)
++		return;
++
++	attach_info->pid = pid;
++	attach_info->skel = skel;
++	attach_info->link = link;
++	INIT_LIST_HEAD(&attach_info->list);
++	list_add(&attach_info->list, &info->head);
++}
++
++static inline void restore_attach_info(struct mthp_adjust_info *info, int pid,
++				struct mthp_adjust **skel, struct bpf_link **link)
++{
++	struct mthp_attach_info *attach_info = NULL;
++
++	list_for_each_entry(attach_info, &info->head, list) {
++		if (attach_info->pid == pid) {
++			*skel = attach_info->skel;
++			*link = attach_info->link;
++			list_del(&attach_info->list);
++			free(attach_info);
++			break;
++		}
++	}
++}
++
++static int mthp_adjust_handler(struct mthp_adjust_info *info, int pid)
++{
++	struct mthp_adjust *skel;
++	struct bpf_link *link;
++	int err = -1;
++
++	skel = mthp_adjust__open();
++	if (!skel)
++		goto thp_reset;
++
++	skel->bss->order = info->order;
++	skel->struct_ops.mthp_ops->pid = pid;
++
++	err = mthp_adjust__load(skel);
++	if (err)
++		goto destroy;
++
++	link = bpf_map__attach_struct_ops(skel->maps.mthp_ops);
++	if (!link)
++		goto destroy;
++
++	save_attach_info(info, pid, skel, link);
++
++	return 0;
++
++destroy:
++	mthp_adjust__destroy(skel);
++thp_reset:
++	return err;
++}
++
++static int mthp_destroy_handler(struct mthp_adjust_info *info, int pid)
++{
++	struct mthp_adjust *skel = NULL;
++	struct bpf_link *link = NULL;
++
++	restore_attach_info(info, pid, &skel, &link);
++	if (skel == NULL || link == NULL)
++		return 0;
++
++	bpf_link__destroy(link);
++	mthp_adjust__destroy(skel);
++
++	return 0;
++}
++
++static int handle_event(void *ctx, void *data, size_t data_sz)
++{
++	struct mthp_adjust_info *info;
++	struct event *e = data;
++
++	printf("pid=%d, comm=%s, stat=%s\n", e->pid, e->comm,
++				e->exit ? "exit" : "enter");
++
++	info = look_for_mthp_adjust_info(e->comm);
++	if (info == NULL)
++		return 0;
++
++	if (e->exit)
++		return mthp_destroy_handler(info, e->pid);
++
++	return mthp_adjust_handler(info, e->pid);
++}
++
++int main(int argc, char **argv)
++{
++	struct mthp_event *skel;
++	struct ring_buffer *rb = NULL;
++	int err;
++
++	skel = mthp_event__open();
++	if (!skel) {
++		fprintf(stderr, "Open mthp event failed.\n");
++		return -EINVAL;
++	}
++
++	err = mthp_event__load(skel);
++	if (err) {
++		fprintf(stderr, "Load mthp event failed: %d\n", err);
++		goto cleanup;
++	}
++
++	err = mthp_event__attach(skel);
++	if (err) {
++		fprintf(stderr, "Attach mthp event failed: %d\n", err);
++		goto cleanup;
++	}
++
++	printf("Process monitor started, waiting for new process to be created...\n");
++
++	rb = ring_buffer__new(bpf_map__fd(skel->maps.rb), handle_event, NULL, NULL);
++	if (!rb) {
++		fprintf(stderr, "Create Ring Buffer failed.\n");
++		err = -1;
++		goto cleanup;
++	}
++
++	while (true) {
++		err = ring_buffer__poll(rb, 100); /* overtime(ms) */
++		if (err == -EINTR) { /* Interrupted by the signal, exit normally */
++			err = 0;
++			break;
++		}
++		if (err < 0) {
++			fprintf(stderr, "Poll Ring Buffer failed: %d\n", err);
++			break;
++		}
++	}
++
++cleanup:
++	if (rb)
++		ring_buffer__free(rb);
++	mthp_event__destroy(skel);
++
++	return err;
++}
+diff --git a/tools/mem_ext/mthp_event.bpf.c b/tools/mem_ext/mthp_event.bpf.c
+new file mode 100644
+index 000000000000..e35af229a516
+--- /dev/null
++++ b/tools/mem_ext/mthp_event.bpf.c
+@@ -0,0 +1,52 @@
++#include "vmlinux.h"
++#include <bpf/bpf_helpers.h>
++#include <bpf/bpf_tracing.h>
++
++struct event {
++	char comm[TASK_COMM_LEN];
++	int pid;
++	bool exit;
++};
++
++struct {
++	__uint(type, BPF_MAP_TYPE_RINGBUF);
++	__uint(max_entries, 256 * 1024);
++} rb SEC(".maps");
++
++SEC("tracepoint/sched/sched_process_exec")
++int tracepoint_sched_process_exec(struct trace_event_raw_sched_process_exec *ctx)
++{
++	struct event *e;
++
++	e = bpf_ringbuf_reserve(&rb, sizeof(*e), 0);
++	if (!e)
++		return 0;
++
++	e->pid = bpf_get_current_pid_tgid() >> 32;
++	bpf_get_current_comm(&e->comm, sizeof(e->comm));
++	e->exit = false;
++
++	bpf_ringbuf_submit(e, 0);
++
++	return 0;
++}
++
++SEC("tracepoint/sched/sched_process_exit")
++int tracepoint_sched_process_exit(struct trace_event_raw_sched_process_exit *ctx)
++{
++	struct event *e;
++
++	e = bpf_ringbuf_reserve(&rb, sizeof(*e), 0);
++	if (!e)
++		return 0;
++
++	e->pid = bpf_get_current_pid_tgid() >> 32;
++	bpf_get_current_comm(&e->comm, sizeof(e->comm));
++	e->exit = true;
++
++	bpf_ringbuf_submit(e, 0);
++
++	return 0;
++}
++
++char _license[] SEC("license") = "GPL";
+diff --git a/tools/mem_ext/mthp_event.c b/tools/mem_ext/mthp_event.c
+new file mode 100644
+index 000000000000..4f010e65d210
+--- /dev/null
++++ b/tools/mem_ext/mthp_event.c
+@@ -0,0 +1,76 @@
++#include <stdio.h>
++#include <unistd.h>
++#include <sys/resource.h>
++#include <bpf/libbpf.h>
++#include "mthp_event.bpf.skel.h"
++
++#define TASK_COMM_LEN 16
++
++struct event {
++	char comm[TASK_COMM_LEN];
++	int pid;
++	bool exit;
++};
++
++static int handle_event(void *ctx, void *data, size_t data_sz)
++{
++	struct event *e = data;
++
++	printf("pid=%d, comm=%s, stat=%s\n", e->pid, e->comm,
++				e->exit ? "exit" : "enter");
++
++	return 0;
++}
++
++int main(int argc, char **argv)
++{
++	struct mthp_event *skel;
++	struct ring_buffer *rb = NULL;
++	int err;
++
++	skel = mthp_event__open();
++	if (!skel) {
++		fprintf(stderr, "Open mthp event failed.\n");
++		return -EINVAL;
++	}
++
++	err = mthp_event__load(skel);
++	if (err) {
++		fprintf(stderr, "Load mthp event failed: %d\n", err);
++		goto cleanup;
++	}
++
++	err = mthp_event__attach(skel);
++	if (err) {
++		fprintf(stderr, "Attach mthp event failed: %d\n", err);
++		goto cleanup;
++	}
++
++	printf("Process monitor started, waiting for new process to be created...\n");
++
++	rb = ring_buffer__new(bpf_map__fd(skel->maps.rb), handle_event, NULL, NULL);
++	if (!rb) {
++		fprintf(stderr, "Create Ring Buffer failed.\n");
++		err = -1;
++		goto cleanup;
++	}
++
++	while (true) {
++		err = ring_buffer__poll(rb, 100); /* overtime(ms) */
++		if (err == -EINTR) { /* Interrupted by the signal, exit normally */
++			err = 0;
++			break;
++		}
++		if (err < 0) {
++			fprintf(stderr, "Poll Ring Buffer failed: %d\n", err);
++			break;
++		}
++	}
++
++cleanup:
++	if (rb)
++		ring_buffer__free(rb);
++	mthp_event__destroy(skel);
++
++	return err;
++}
+-- 
+2.51.0
+
