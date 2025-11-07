@@ -1,0 +1,19 @@
+#!/usr/bin/bpftrace
+
+BEGIN
+{
+	@start=nsecs;
+}
+
+tracepoint:huge_memory:mm_khugepaged_scan
+{
+	@progress_pages[args->mm->owner->comm] += (uint64)args->progress;
+	if (args->full == 1) {
+		print(@progress_pages);
+		printf("Total consume time: %d seconds\n",
+			(nsecs - @start)/1000/1000/1000 - 10); // scan_sleep_millisecs
+
+		clear(@progress_pages);
+		@start = nsecs;
+	}
+}
