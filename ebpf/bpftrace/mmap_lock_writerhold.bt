@@ -1,0 +1,92 @@
+#!/usr/bin/env bpftrace
+
+BEGIN
+{
+	printf("Monitoring mmap_lock start.\n");
+
+	@timeout = 120 * 1000000000; // 120s
+}
+
+tracepoint:mmap_lock:mmap_lock_acquire_returned /args->success == true/
+{
+	if (args->write == true) {
+		@writer_holder_comm[args->mm, tid] = comm;
+		@writer_holder_stack[args->mm, tid] = kstack();
+		@writer_start_time[args->mm, tid] = nsecs;
+	} else {
+		if (@writer_start_time[args->mm, tid]) {
+			/* mmap_write_downgrade */
+			delete(@writer_start_time[args->mm, tid]);
+			delete(@writer_holder_comm[args->mm, tid]);
+			delete(@writer_holder_stack[args->mm, tid]);
+		}
+
+		@reader_holder_comm[args->mm, tid] = comm;
+		@reader_holder_stack[args->mm, tid] = kstack();
+		@reader_start_time[args->mm, tid] = nsecs;
+	}
+}
+
+tracepoint:mmap_lock:mmap_lock_released
+{
+	if (args->write == true && @writer_start_time[args->mm, tid]) {
+		delete(@writer_start_time[args->mm, tid]);
+		delete(@writer_holder_comm[args->mm, tid]);
+		delete(@writer_holder_stack[args->mm, tid]);
+	} else if (@reader_start_time[args->mm, tid]) {
+		delete(@reader_start_time[args->mm, tid]);
+		delete(@reader_holder_comm[args->mm, tid]);
+		delete(@reader_holder_stack[args->mm, tid]);
+	}
+}
+
+interval:s:10
+{
+	for ($i : @writer_start_time) {
+		$mymm = $i.0.0;
+		$mytid = $i.0.1;
+		$hold_time = nsecs - @writer_start_time[$mymm, $mytid];
+
+		if ($hold_time > (uint64)@timeout) {
+			printf("========================================\n");
+			printf("Writer lock held for %llu seconds\n", $hold_time / 1000000000ULL);
+
+			printf("Writer Lock Holder:\n");
+			printf("  PID: %d\n", $mytid);
+			printf("  Comm: %s\n", @writer_holder_comm[$mymm, $mytid]);
+			printf("  Kernel Stack at holder:\n");
+			printf("  %s\n", @writer_holder_stack[$mymm, $mytid]);
+		}
+	}
+
+	for ($i : @reader_start_time) {
+		$mymm = $i.0.0;
+		$mytid = $i.0.1;
+		$hold_time = nsecs - @reader_start_time[$mymm, $mytid];
+
+		if ($hold_time > (uint64)@timeout) {
+			printf("========================================\n");
+			printf("Reader lock held for %llu seconds\n", $hold_time / 1000000000ULL);
+
+			printf("Reader Lock Holder:\n");
+			printf("  PID: %d\n", $mytid);
+			printf("  Comm: %s\n", @reader_holder_comm[$mymm, $mytid]);
+			printf("  Kernel Stack at holder:\n");
+			printf("  %s\n", @reader_holder_stack[$mymm, $mytid]);
+		}
+	}
+}
+
+END
+{
+	clear(@writer_start_time);
+	clear(@writer_holder_comm);
+	clear(@writer_holder_stack);
+
+	clear(@reader_start_time);
+	clear(@reader_holder_comm);
+	clear(@reader_holder_stack);
+
+	printf("Monitoring mmap_lock end.\n");
+}
+
