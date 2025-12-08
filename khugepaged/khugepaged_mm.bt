@@ -1,19 +1,46 @@
 #!/usr/bin/bpftrace
 
-BEGIN
+tracepoint:huge_memory:mm_khugepaged_scan_pmd
 {
-	@start=nsecs;
+	if (!@start) {
+		@start=nsecs;
+	}
+
+	// @scan_pmd[args->mm->owner->comm, args->status] = count();
+	@scan_pmd_status[args->status] = count();
+}
+
+tracepoint:huge_memory:mm_khugepaged_scan_file
+{
+	if (!@start) {
+		@start=nsecs;
+	}
+
+	// @scan_file[args->mm->owner->comm, args->result] = count();
+	@scan_file_status[args->result] = count();
 }
 
 tracepoint:huge_memory:mm_khugepaged_scan
 {
-	@progress_pages[args->mm->owner->comm] += (uint64)args->progress;
+	// @progress_pages[args->mm->owner->comm] += (uint64)args->progress;
+	@total_progress_pages += (uint64)args->progress;
 	if (args->full == 1) {
-		print(@progress_pages);
-		printf("Total consume time: %d seconds\n",
-			(nsecs - @start)/1000/1000/1000 - 10); // scan_sleep_millisecs
+		// print(@scan_pmd);
+		print(@scan_pmd_status);
+		// print(@scan_file);
+		print(@scan_file_status);
+		// print(@progress_pages);
+		printf("total progress size: %d MB\n", @total_progress_pages*4/1024);
+		printf("Total time         : %d seconds\n\n",
+			(nsecs - @start)/1000/1000/1000);
 
-		clear(@progress_pages);
-		@start = nsecs;
+		// clear(@scan_pmd);
+		clear(@scan_pmd_status);
+		// clear(@scan_file);
+		clear(@scan_file_status);
+		// clear(@progress_pages);
+		clear(@total_progress_pages);
+		clear(@start);
 	}
 }
+

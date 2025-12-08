@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <fcntl.h>
 #include <string.h>
 #include <unistd.h>
@@ -14,8 +15,6 @@
 #define BATCH_SIZE	(128 * 1024 * 1024)	// 128MB
 #define BATCH_PAGES	(BATCH_SIZE / PAGE_SIZE)
 #define ITERATIONS	10000
-
-#define KHUGEPAGED_SCAN	"/sys/kernel/mm/transparent_hugepage/khugepaged/scan_sleep_millisecs"
 
 static inline int64_t access_memory_batch(volatile char *buffer, int count)
 {
@@ -65,7 +64,7 @@ static inline int64_t access_memory_batch(volatile char *buffer, int count)
 	return end - start;
 }
 
-static inline void test_tlb_performance(char *buffer, const char *caller)
+static inline void test_tlb_performance(char *buffer, const char *status)
 {
 	struct timespec start, end;
 	uint64_t total_cycles = 0;
@@ -90,97 +89,46 @@ static inline void test_tlb_performance(char *buffer, const char *caller)
 	elapsed = (end.tv_sec - start.tv_sec) +
 		  (end.tv_nsec - start.tv_nsec) / 1e9;
 
-	printf("%s\n", caller);
+	printf("Process %s\n", status);
 	printf("  Completed %zu accesses in %.2f seconds\n", total_access, elapsed);
 	printf("  Average cycles per access: %.2f cycles/access\n", (double)total_cycles / total_access);
 	printf("  Throughput: %.2f M accesses/sec\n\n", total_access / elapsed / 1e6);
 }
 
-static void process_cold(void)
-{
-	char *buffer;
-
-	buffer = mmap(NULL, BATCH_SIZE, PROT_READ | PROT_WRITE,
-		      MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
-	if (buffer == MAP_FAILED) {
-		perror("Allocate memory failed.\n");
-		return;
-	}
-
-	/* Make khugepaged to collapse buffer */
-	madvise(buffer, BATCH_SIZE, MADV_HUGEPAGE);
-	/* Make buffer to inactive list for lru */
-	madvise(buffer, BATCH_SIZE, MADV_FREE);
-
-	test_tlb_performance(buffer, __func__);
-	while(1)
-		sleep(1);
-
-	munmap(buffer, BATCH_SIZE);
-}
-
-static void process_hot(void)
-{
-	char val[10] = { 0 };
-	int len;
-	int fd;
-	char *buffer;
-
-	fd = open(KHUGEPAGED_SCAN, O_RDWR);
-	if (fd == -1) {
-		printf("Open %s file failed.\n", KHUGEPAGED_SCAN);
-		return;
-	}
-	len = read(fd, val, sizeof(val));
-	lseek(fd, 0, SEEK_SET);
-
-	buffer = mmap(NULL, BATCH_SIZE, PROT_READ | PROT_WRITE,
-		      MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
-	if (buffer == MAP_FAILED) {
-		perror("Allocate memory failed.\n");
-		return;
-	}
-
-	/* Make khugepaged to collapse buffer */
-	madvise(buffer, BATCH_SIZE, MADV_HUGEPAGE);
-	/* khuegepaged start working. */
-	len = write(fd, val, len);
-	/* doing something, e.g. access buffer frequently */
-#ifdef ACCESS_BUFFER
-	for (int i = 0; i < 10000; i++)
-		memset(buffer, i, BATCH_SIZE);
-#else
-	sleep(60);
-#endif
-
-	test_tlb_performance(buffer, __func__);
-
-	munmap(buffer, BATCH_SIZE);
-}
-
 int main(int argc, char *argv[])
 {
-        pid_t pid;
+	const char *status = argv[1];
+	char *buffer;
 
 	printf("Batch size : %d MB\n", BATCH_SIZE / (1024 * 1024));
 	printf("Batch pages: %d(4KB) or %d(2MB)\n", BATCH_PAGES,
 				BATCH_SIZE / (2 * 1024 * 1024));
 	printf("Total iterations: %d\n\n", ITERATIONS);
 
-	pid = fork();
-	switch (pid) {
-	case -1:
-		perror("Execute fork() failed.");
-		break;
-	case 0:
-		process_cold();
-		break;
-	default:
-		sleep(1); /* wait process_cold to allocate memory first */
-		process_hot();
-		kill(pid, SIGTERM);
-		break;
+	buffer = mmap(NULL, BATCH_SIZE, PROT_READ | PROT_WRITE,
+		      MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
+	if (buffer == MAP_FAILED) {
+		perror("Allocate memory failed.\n");
+		return -EINVAL;
 	}
+
+	/* Make khugepaged to collapse buffer */
+	madvise(buffer, BATCH_SIZE, MADV_HUGEPAGE);
+
+	if (!strncmp(status, "hot", 3)) {
+		for (int i = 0; i < 150; i++) {
+			memset(buffer, i, BATCH_SIZE);
+			sleep(1);
+		}
+	} else {
+		sleep(10);                              /* hot1 -> cold -> hot2 */
+		madvise(buffer, BATCH_SIZE, MADV_COLD); /* hot1 -> hot2 -> cold */
+		sleep(140);
+	}
+
+	test_tlb_performance(buffer, status);
+
+	munmap(buffer, BATCH_SIZE);
 
 	return 0;
 }
