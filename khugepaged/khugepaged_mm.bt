@@ -24,7 +24,7 @@ tracepoint:huge_memory:mm_khugepaged_scan
 {
 	// @progress_pages[args->mm->owner->comm] += (uint64)args->progress;
 	@total_progress_pages += (uint64)args->progress;
-	if (args->full == 1) {
+	if (args->full_scan_finished == 1) {
 		// print(@scan_pmd);
 		print(@scan_pmd_status);
 		// print(@scan_file);
