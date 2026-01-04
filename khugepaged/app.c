@@ -122,7 +122,7 @@ int main(int argc, char *argv[])
 		}
 	} else {
 		sleep(10);                              /* hot1 -> cold -> hot2 */
-		madvise(buffer, BATCH_SIZE, MADV_COLD); /* hot1 -> hot2 -> cold */
+		madvise(buffer, BATCH_SIZE, MADV_FREE); /* skip lazy-free folios at scanning */
 		sleep(140);
 	}
 
