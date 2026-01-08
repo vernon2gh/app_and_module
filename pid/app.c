@@ -1,38 +1,62 @@
+#define _GNU_SOURCE
+
 #include <stdio.h>
+#include <stdbool.h>
+#include <unistd.h>
 #include <pthread.h>
 #include <sys/types.h>
-#include <unistd.h>
 #include <sys/syscall.h>
-
-static pid_t gettid(void)
-{
-    return syscall(__NR_gettid);
-}
 
 static void *thread_fun(void *param)
 {
-    printf("pid: %d, ppid: %d, tid: %d\n", getpid(), getppid(), gettid());
-    sleep(10);
-    return NULL;
+	bool parent = param ? true : false;
+	pid_t pid;
+
+	usleep(1000);
+
+	if (parent)
+		printf("parent task in the thread:\n");
+	else
+		printf("child task in the thread:\n");
+
+	pid = getpid();
+	printf("  task_struct pid  %d\n", gettid());
+	printf("  task_struct tgid %d\n", pid);
+	printf("  task_struct pgid %d\n", getpgid(pid));
+	printf("  task_struct sid  %d\n", getsid(pid));
+
+ 	return NULL;
 }
 
-int main(void)
+int main(int argc, char *argv[])
 {
-    pthread_t tid;
-    int ret;
+	pthread_t tid;
+	pid_t pid;
 
-    printf("pid: %d, ppid: %d, tid: %d\n", getpid(), getppid(), gettid());
+	pid = fork();
+	switch (pid) {
+	case -1:
+		perror("Execute fork() failed.");
+		return -1;
+	case 0:
+		printf("child task:\n");
+		break;
+	default:
+		usleep(2000);
+		printf("parent task:\n");
+		break;
+	}
 
-    ret = pthread_create(&tid, NULL, thread_fun, NULL);
-    if (ret == -1) {
-        perror("can't create new thread");
-        return -1;
-    }
+	pthread_create(&tid, NULL, thread_fun, (void *)(unsigned long)pid);
 
-    if (pthread_join(tid, NULL) != 0) {
-        perror("call pthread_join function fail");
-        return -1;
-    }
+	pid = getpid();
+	printf("  task_struct pid  %d\n", gettid());
+	printf("  task_struct tgid %d\n", pid);
+	printf("  task_struct pgid %d\n", getpgid(pid));
+	printf("  task_struct sid  %d\n", getsid(pid));
 
-    return 0;
+	pthread_join(tid, NULL);
+
+	return 0;
 }
+
