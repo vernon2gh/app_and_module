@@ -19,9 +19,9 @@ static void *thread_fun(void *param)
 	else
 		printf("child task in the thread:\n");
 
-	pid = getpid();
-	printf("  task_struct pid  %d\n", gettid());
-	printf("  task_struct tgid %d\n", pid);
+	pid = gettid();
+	printf("  task_struct pid  %d\n", pid);
+	printf("  task_struct tgid %d\n", getpid());
 	printf("  task_struct pgid %d\n", getpgid(pid));
 	printf("  task_struct sid  %d\n", getsid(pid));
 
@@ -49,9 +49,9 @@ int main(int argc, char *argv[])
 
 	pthread_create(&tid, NULL, thread_fun, (void *)(unsigned long)pid);
 
-	pid = getpid();
-	printf("  task_struct pid  %d\n", gettid());
-	printf("  task_struct tgid %d\n", pid);
+	pid = gettid();
+	printf("  task_struct pid  %d\n", pid);
+	printf("  task_struct tgid %d\n", getpid());
 	printf("  task_struct pgid %d\n", getpgid(pid));
 	printf("  task_struct sid  %d\n", getsid(pid));
 
