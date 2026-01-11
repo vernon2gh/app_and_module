@@ -1,6 +1,7 @@
 #!/bin/bash
 
 echo madvise > /sys/kernel/mm/transparent_hugepage/enabled
+echo 1 > /sys/kernel/mm/transparent_hugepage/khugepaged/max_ptes_none
 make
 sleep 60
 
