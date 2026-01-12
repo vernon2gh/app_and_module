@@ -1,4 +1,4 @@
-From 50824073ec9a1414ee1e262f737b896ec2b4c829 Mon Sep 17 00:00:00 2001
+From bf67e12b2983b1fa8c8ce6970da23457dbe606af Mon Sep 17 00:00:00 2001
 From: Vernon Yang <vernon2gm@gmail.com>
 Date: Tue, 28 Oct 2025 21:08:08 +0800
 Subject: [PATCH] Add mem_ext
@@ -9,10 +9,10 @@ Signed-off-by: Vernon Yang <vernon2gm@gmail.com>
  tools/mem_ext/Makefile          | 257 ++++++++++++++++++++++++++++++
  tools/mem_ext/README.md         | 270 ++++++++++++++++++++++++++++++++
  tools/mem_ext/mthp_adjust.bpf.c |  21 +++
- tools/mem_ext/mthp_adjust.c     | 196 +++++++++++++++++++++++
- tools/mem_ext/mthp_event.bpf.c  |  52 ++++++
- tools/mem_ext/mthp_event.c      |  76 +++++++++
- 7 files changed, 874 insertions(+)
+ tools/mem_ext/mthp_adjust.c     | 252 +++++++++++++++++++++++++++++
+ tools/mem_ext/mthp_event.bpf.c  |  49 ++++++
+ tools/mem_ext/mthp_event.c      |  96 ++++++++++++
+ 7 files changed, 947 insertions(+)
  create mode 100644 tools/mem_ext/.gitignore
  create mode 100644 tools/mem_ext/Makefile
  create mode 100644 tools/mem_ext/README.md
@@ -597,152 +597,208 @@ index 000000000000..0dc4d649b4c0
 +char _license[] SEC("license") = "GPL";
 diff --git a/tools/mem_ext/mthp_adjust.c b/tools/mem_ext/mthp_adjust.c
 new file mode 100644
-index 000000000000..24a539bcdc5f
+index 000000000000..878077e37652
 --- /dev/null
 +++ b/tools/mem_ext/mthp_adjust.c
-@@ -0,0 +1,196 @@
+@@ -0,0 +1,252 @@
 +#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <errno.h>
 +#include <unistd.h>
++#include <pthread.h>
++#include <time.h>
 +#include <sys/mman.h>
 +#include <sys/resource.h>
 +#include <bpf/libbpf.h>
++#include <linux/errno.h>
 +#include <linux/list.h>
 +#include "mthp_event.bpf.skel.h"
 +#include "mthp_adjust.bpf.skel.h"
 +
-+#define TASK_COMM_LEN	16
++#define MTHP_ORDER_MAX		9U
++#define MTHP_ORDER_MIN		0U
++#define MTHP_ORDER_DEFAULT	0U
 +
 +struct event {
-+	char comm[TASK_COMM_LEN];
-+	int pid;
++	pid_t pid;
 +	bool exit;
 +};
 +
-+struct mthp_attach_info {
-+	int pid;
++struct monitor {
++	pid_t pid;
++	pthread_t monitor_thread;
++
 +	struct mthp_adjust *skel;
 +	struct bpf_link *link;
 +
 +	struct list_head list;
 +};
 +
-+struct mthp_adjust_info {
-+	char comm[TASK_COMM_LEN];
-+	int order;
++static LIST_HEAD(monitor_list);
 +
-+	struct list_head head;
-+};
-+
-+static struct mthp_adjust_info table[] = {
-+	{ "a.out", 0, LIST_HEAD_INIT(table[0].head) },
-+};
-+
-+static inline struct mthp_adjust_info *look_for_mthp_adjust_info(const char *comm)
++static unsigned int get_rss(pid_t pid)
 +{
-+	int i;
++	unsigned long rss_page_nr;
++	char path[64];
++	char line[1024];
++	FILE *fp;
 +
-+	for (i = 0; i < ARRAY_SIZE(table); i++) {
-+		if (!strcmp(comm, table[i].comm))
-+			return &table[i];
++	snprintf(path, sizeof(path), "/proc/%d/statm", pid);
++
++	fp = fopen(path, "r");
++	if (fp == NULL)
++		return 0;
++
++	if (fgets(line, sizeof(line), fp) == NULL) {
++		fclose(fp);
++		return 0;
++	}
++
++	sscanf(line, "%*u %lu", &rss_page_nr);
++	fclose(fp);
++
++	return rss_page_nr * getpagesize() / 1024 / 1024;
++}
++
++static void *memory_monitor_thread(void *arg)
++{
++	struct monitor *mon = arg;
++	unsigned int rss, last_rss;		/* MB */
++	unsigned int rate;			/* MB/s */
++	unsigned int sample_interval_ms = 10;	/* 10ms */
++	unsigned int order;
++	int ret;
++
++	/*
++	 * Enable thread cancellation and set async cancel for immediate
++	 * response
++	 */
++	pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
++	pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
++
++	last_rss = get_rss(mon->pid);
++
++	while (1) {
++		usleep(sample_interval_ms * 1000);
++
++		rss = get_rss(mon->pid);
++		if (rss == 0)
++			break;
++
++		rate = (rss - last_rss) * 1000 / sample_interval_ms;
++		order = mon->skel->bss->order;
++		printf("pid=%d, order %u, rate=%uMB/s\n", mon->pid, order, rate);
++
++		if ((rate > 100 && order == MTHP_ORDER_MAX) ||
++		    (rate <= 100 && order == MTHP_ORDER_MIN))
++			break;
++
++		/* Check if rate exceeds 100M/s */
++		if (rate > 100) {
++			order = min(order + rate / 100, MTHP_ORDER_MAX);
++			sample_interval_ms = 10;
++		} else {
++			order = max(order - 1, MTHP_ORDER_MIN);
++			sample_interval_ms *= 2;
++		}
++
++		mon->skel->bss->order = order;
++
++		ret = bpf_link__update_map(mon->link, mon->skel->maps.mthp_ops);
++		if (ret < 0) {
++			fprintf(stderr, "Failed to update BPF link: %d\n", ret);
++			break;
++		}
++
++		last_rss = rss;
 +	}
 +
 +	return NULL;
 +}
 +
-+static inline void save_attach_info(struct mthp_adjust_info *info, int pid,
-+				struct mthp_adjust *skel, struct bpf_link *link)
++static int start_memory_monitor(pid_t pid)
 +{
-+	struct mthp_attach_info *attach_info;
++	struct monitor *mon;
++	struct mthp_adjust *skel;
++	struct bpf_link *link;
++	int ret;
 +
-+	attach_info = malloc(sizeof(struct mthp_attach_info));
-+	if (attach_info == NULL)
-+		return;
++	printf("Started memory monitor for pid=%d\n", pid);
 +
-+	attach_info->pid = pid;
-+	attach_info->skel = skel;
-+	attach_info->link = link;
-+	INIT_LIST_HEAD(&attach_info->list);
-+	list_add(&attach_info->list, &info->head);
++	skel = mthp_adjust__open();
++	if (!skel)
++		return -1;
++
++	skel->bss->order = MTHP_ORDER_DEFAULT;
++	skel->struct_ops.mthp_ops->pid = pid;
++
++	ret = mthp_adjust__load(skel);
++	if (ret)
++		goto destroy_skel;
++
++	link = bpf_map__attach_struct_ops(skel->maps.mthp_ops);
++	if (!link)
++		goto destroy_skel;
++
++	mon = malloc(sizeof(struct monitor));
++	if (!mon)
++		goto destroy_link;
++
++	mon->pid = pid;
++	mon->skel = skel;
++	mon->link = link;
++
++	ret = pthread_create(&mon->monitor_thread, NULL, memory_monitor_thread, mon);
++	if (ret != 0)
++		goto unlock;
++
++	list_add(&mon->list, &monitor_list);
++
++	return 0;
++
++unlock:
++	free(mon);
++destroy_link:
++	bpf_link__destroy(link);
++destroy_skel:
++	mthp_adjust__destroy(skel);
++	return -1;
 +}
 +
-+static inline void restore_attach_info(struct mthp_adjust_info *info, int pid,
-+				struct mthp_adjust **skel, struct bpf_link **link)
++static void stop_memory_monitor(pid_t pid)
 +{
-+	struct mthp_attach_info *attach_info = NULL;
++	struct monitor *mon;
 +
-+	list_for_each_entry(attach_info, &info->head, list) {
-+		if (attach_info->pid == pid) {
-+			*skel = attach_info->skel;
-+			*link = attach_info->link;
-+			list_del(&attach_info->list);
-+			free(attach_info);
++	printf("Stopped memory monitor for pid=%d\n", pid);
++
++	list_for_each_entry(mon, &monitor_list, list) {
++		if (mon->pid == pid) {
++			pthread_cancel(mon->monitor_thread);
++			pthread_join(mon->monitor_thread, NULL);
++
++			bpf_link__destroy(mon->link);
++			mthp_adjust__destroy(mon->skel);
++
++			list_del(&mon->list);
++			free(mon);
 +			break;
 +		}
 +	}
 +}
 +
-+static int mthp_adjust_handler(struct mthp_adjust_info *info, int pid)
-+{
-+	struct mthp_adjust *skel;
-+	struct bpf_link *link;
-+	int err = -1;
-+
-+	skel = mthp_adjust__open();
-+	if (!skel)
-+		goto thp_reset;
-+
-+	skel->bss->order = info->order;
-+	skel->struct_ops.mthp_ops->pid = pid;
-+
-+	err = mthp_adjust__load(skel);
-+	if (err)
-+		goto destroy;
-+
-+	link = bpf_map__attach_struct_ops(skel->maps.mthp_ops);
-+	if (!link)
-+		goto destroy;
-+
-+	save_attach_info(info, pid, skel, link);
-+
-+	return 0;
-+
-+destroy:
-+	mthp_adjust__destroy(skel);
-+thp_reset:
-+	return err;
-+}
-+
-+static int mthp_destroy_handler(struct mthp_adjust_info *info, int pid)
-+{
-+	struct mthp_adjust *skel = NULL;
-+	struct bpf_link *link = NULL;
-+
-+	restore_attach_info(info, pid, &skel, &link);
-+	if (skel == NULL || link == NULL)
-+		return 0;
-+
-+	bpf_link__destroy(link);
-+	mthp_adjust__destroy(skel);
-+
-+	return 0;
-+}
-+
 +static int handle_event(void *ctx, void *data, size_t data_sz)
 +{
-+	struct mthp_adjust_info *info;
 +	struct event *e = data;
 +
-+	printf("pid=%d, comm=%s, stat=%s\n", e->pid, e->comm,
-+				e->exit ? "exit" : "enter");
-+
-+	info = look_for_mthp_adjust_info(e->comm);
-+	if (info == NULL)
++	if (e->exit) {
++		stop_memory_monitor(e->pid);
 +		return 0;
++	}
 +
-+	if (e->exit)
-+		return mthp_destroy_handler(info, e->pid);
++	start_memory_monitor(e->pid);
 +
-+	return mthp_adjust_handler(info, e->pid);
++	return 0;
 +}
 +
 +int main(int argc, char **argv)
@@ -799,17 +855,16 @@ index 000000000000..24a539bcdc5f
 +}
 diff --git a/tools/mem_ext/mthp_event.bpf.c b/tools/mem_ext/mthp_event.bpf.c
 new file mode 100644
-index 000000000000..e35af229a516
+index 000000000000..75b1d6574e5a
 --- /dev/null
 +++ b/tools/mem_ext/mthp_event.bpf.c
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,49 @@
 +#include "vmlinux.h"
 +#include <bpf/bpf_helpers.h>
 +#include <bpf/bpf_tracing.h>
 +
 +struct event {
-+	char comm[TASK_COMM_LEN];
-+	int pid;
++	pid_t pid;
 +	bool exit;
 +};
 +
@@ -828,7 +883,6 @@ index 000000000000..e35af229a516
 +		return 0;
 +
 +	e->pid = bpf_get_current_pid_tgid() >> 32;
-+	bpf_get_current_comm(&e->comm, sizeof(e->comm));
 +	e->exit = false;
 +
 +	bpf_ringbuf_submit(e, 0);
@@ -846,7 +900,6 @@ index 000000000000..e35af229a516
 +		return 0;
 +
 +	e->pid = bpf_get_current_pid_tgid() >> 32;
-+	bpf_get_current_comm(&e->comm, sizeof(e->comm));
 +	e->exit = true;
 +
 +	bpf_ringbuf_submit(e, 0);
@@ -857,10 +910,10 @@ index 000000000000..e35af229a516
 +char _license[] SEC("license") = "GPL";
 diff --git a/tools/mem_ext/mthp_event.c b/tools/mem_ext/mthp_event.c
 new file mode 100644
-index 000000000000..4f010e65d210
+index 000000000000..49937d1aab64
 --- /dev/null
 +++ b/tools/mem_ext/mthp_event.c
-@@ -0,0 +1,76 @@
+@@ -0,0 +1,96 @@
 +#include <stdio.h>
 +#include <unistd.h>
 +#include <sys/resource.h>
@@ -870,16 +923,36 @@ index 000000000000..4f010e65d210
 +#define TASK_COMM_LEN 16
 +
 +struct event {
-+	char comm[TASK_COMM_LEN];
 +	int pid;
 +	bool exit;
 +};
 +
++static int get_task_comm(pid_t pid, char *comm)
++{
++	char path[64];
++	FILE *fp;
++
++	snprintf(path, sizeof(path), "/proc/%d/comm", pid);
++
++	fp = fopen(path, "r");
++	if (fp == NULL)
++		return -1;
++
++	fgets(comm, TASK_COMM_LEN, fp);
++	comm[strlen(comm) - 1] = '\0';
++
++	fclose(fp);
++
++	return 0;
++}
++
 +static int handle_event(void *ctx, void *data, size_t data_sz)
 +{
++	char comm[TASK_COMM_LEN];
 +	struct event *e = data;
 +
-+	printf("pid=%d, comm=%s, stat=%s\n", e->pid, e->comm,
++	get_task_comm(e->pid, comm);
++	printf("pid=%d, comm=%s, stat=%s\n", e->pid, comm,
 +				e->exit ? "exit" : "enter");
 +
 +	return 0;
