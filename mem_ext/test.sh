@@ -1,6 +1,6 @@
 #!/bin/bash
 
-BPF=./build/bin
+BPF=$(pwd)/build/bin
 UB=~/UnixBench
 
 echo always > /sys/kernel/mm/transparent_hugepage/enabled
@@ -22,9 +22,13 @@ function test_stream()
 	export OMP_NUM_THREADS=8
 
 	## origin test
+	sleep 60
+	echo 3 > /proc/sys/vm/drop_caches
 	./stream
 
 	## thp adjust test
+	sleep 60
+	echo 3 > /proc/sys/vm/drop_caches
 	$BPF/mthp_adjust &
 	sleep 3
 	./stream

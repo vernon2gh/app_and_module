@@ -1,18 +1,19 @@
-From bf67e12b2983b1fa8c8ce6970da23457dbe606af Mon Sep 17 00:00:00 2001
+From 4ea72f7035327b35183fd9506c3c30ad24a369ca Mon Sep 17 00:00:00 2001
 From: Vernon Yang <vernon2gm@gmail.com>
 Date: Tue, 28 Oct 2025 21:08:08 +0800
 Subject: [PATCH] Add mem_ext
 
 Signed-off-by: Vernon Yang <vernon2gm@gmail.com>
 ---
+ mm/huge_memory_bpf.c            |  11 +-
  tools/mem_ext/.gitignore        |   2 +
  tools/mem_ext/Makefile          | 257 ++++++++++++++++++++++++++++++
  tools/mem_ext/README.md         | 270 ++++++++++++++++++++++++++++++++
  tools/mem_ext/mthp_adjust.bpf.c |  21 +++
- tools/mem_ext/mthp_adjust.c     | 252 +++++++++++++++++++++++++++++
- tools/mem_ext/mthp_event.bpf.c  |  49 ++++++
+ tools/mem_ext/mthp_adjust.c     | 260 ++++++++++++++++++++++++++++++
+ tools/mem_ext/mthp_event.bpf.c  |  91 +++++++++++
  tools/mem_ext/mthp_event.c      |  96 ++++++++++++
- 7 files changed, 947 insertions(+)
+ 8 files changed, 1002 insertions(+), 6 deletions(-)
  create mode 100644 tools/mem_ext/.gitignore
  create mode 100644 tools/mem_ext/Makefile
  create mode 100644 tools/mem_ext/README.md
@@ -21,6 +22,43 @@ Signed-off-by: Vernon Yang <vernon2gm@gmail.com>
  create mode 100644 tools/mem_ext/mthp_event.bpf.c
  create mode 100644 tools/mem_ext/mthp_event.c
 
+diff --git a/mm/huge_memory_bpf.c b/mm/huge_memory_bpf.c
+index f8383c2a299f..8b975f7cf989 100644
+--- a/mm/huge_memory_bpf.c
++++ b/mm/huge_memory_bpf.c
+@@ -71,10 +71,6 @@ unsigned long bpf_hook_thp_get_orders(struct vm_area_struct *vma,
+ 	if (!mm)
+ 		return orders;
+ 
+-	/* Global BPF-THP takes precedence over per-process BPF-THP. */
+-	if (rcu_access_pointer(bpf_thp_global))
+-		return bpf_hook_thp_get_orders_global(vma, type, orders);
+-
+ 	rcu_read_lock();
+ 	bpf_thp = rcu_dereference(mm->bpf_mm.bpf_thp);
+ 	if (!bpf_thp || !bpf_thp->thp_get_order)
+@@ -87,6 +83,10 @@ unsigned long bpf_hook_thp_get_orders(struct vm_area_struct *vma,
+ 
+ out:
+ 	rcu_read_unlock();
++
++	if (!bpf_thp && rcu_access_pointer(bpf_thp_global))
++		return bpf_hook_thp_get_orders_global(vma, type, orders);
++
+ 	return orders;
+ }
+ 
+@@ -260,9 +260,8 @@ static int bpf_thp_reg(void *kdata, struct bpf_link *link)
+ 	 */
+ 	spin_lock(&thp_ops_lock);
+ 	/* Each process is exclusively managed by a single BPF-THP.
+-	 * Global mode disables per-process instances.
+ 	 */
+-	if (rcu_access_pointer(mm->bpf_mm.bpf_thp) || rcu_access_pointer(bpf_thp_global)) {
++	if (rcu_access_pointer(mm->bpf_mm.bpf_thp)) {
+ 		err = -EBUSY;
+ 		goto out;
+ 	}
 diff --git a/tools/mem_ext/.gitignore b/tools/mem_ext/.gitignore
 new file mode 100644
 index 000000000000..d6264fe1c8cd
@@ -597,10 +635,10 @@ index 000000000000..0dc4d649b4c0
 +char _license[] SEC("license") = "GPL";
 diff --git a/tools/mem_ext/mthp_adjust.c b/tools/mem_ext/mthp_adjust.c
 new file mode 100644
-index 000000000000..878077e37652
+index 000000000000..53411c5a79ad
 --- /dev/null
 +++ b/tools/mem_ext/mthp_adjust.c
-@@ -0,0 +1,252 @@
+@@ -0,0 +1,260 @@
 +#include <stdio.h>
 +#include <stdlib.h>
 +#include <string.h>
@@ -688,8 +726,6 @@ index 000000000000..878077e37652
 +
 +		rate = (rss - last_rss) * 1000 / sample_interval_ms;
 +		order = mon->skel->bss->order;
-+		printf("pid=%d, order %u, rate=%uMB/s\n", mon->pid, order, rate);
-+
 +		if ((rate > 100 && order == MTHP_ORDER_MAX) ||
 +		    (rate <= 100 && order == MTHP_ORDER_MIN))
 +			break;
@@ -703,6 +739,8 @@ index 000000000000..878077e37652
 +			sample_interval_ms *= 2;
 +		}
 +
++		// printf("pid=%d, rate=%uMB/s, order %u -> %u\n", mon->pid, rate,
++		//				mon->skel->bss->order, order);
 +		mon->skel->bss->order = order;
 +
 +		ret = bpf_link__update_map(mon->link, mon->skel->maps.mthp_ops);
@@ -724,7 +762,7 @@ index 000000000000..878077e37652
 +	struct bpf_link *link;
 +	int ret;
 +
-+	printf("Started memory monitor for pid=%d\n", pid);
++	// printf("Started memory monitor for pid=%d\n", pid);
 +
 +	skel = mthp_adjust__open();
 +	if (!skel)
@@ -770,7 +808,7 @@ index 000000000000..878077e37652
 +{
 +	struct monitor *mon;
 +
-+	printf("Stopped memory monitor for pid=%d\n", pid);
++	// printf("Stopped memory monitor for pid=%d\n", pid);
 +
 +	list_for_each_entry(mon, &monitor_list, list) {
 +		if (mon->pid == pid) {
@@ -803,62 +841,70 @@ index 000000000000..878077e37652
 +
 +int main(int argc, char **argv)
 +{
-+	struct mthp_event *skel;
++	struct mthp_adjust *default_adjust_skel;
++	struct bpf_link *default_adjust_link;
++	struct mthp_event *event_skel;
 +	struct ring_buffer *rb = NULL;
 +	int err;
 +
-+	skel = mthp_event__open();
-+	if (!skel) {
-+		fprintf(stderr, "Open mthp event failed.\n");
++	default_adjust_skel = mthp_adjust__open();
++	if (!default_adjust_skel)
 +		return -EINVAL;
-+	}
 +
-+	err = mthp_event__load(skel);
-+	if (err) {
-+		fprintf(stderr, "Load mthp event failed: %d\n", err);
-+		goto cleanup;
-+	}
++	default_adjust_skel->bss->order = MTHP_ORDER_DEFAULT;
++	default_adjust_skel->struct_ops.mthp_ops->pid = 0;
++	err = mthp_adjust__load(default_adjust_skel);
++	if (err)
++		goto destroy_adjust_skel;
 +
-+	err = mthp_event__attach(skel);
-+	if (err) {
-+		fprintf(stderr, "Attach mthp event failed: %d\n", err);
-+		goto cleanup;
-+	}
++	default_adjust_link = bpf_map__attach_struct_ops(default_adjust_skel->maps.mthp_ops);
++	if (!default_adjust_link)
++		goto destroy_adjust_skel;
++
++	event_skel = mthp_event__open();
++	if (!event_skel)
++		goto destroy_adjust_link;
++
++	err = mthp_event__load(event_skel);
++	if (err)
++		goto destroy_event_skel;
++
++	err = mthp_event__attach(event_skel);
++	if (err)
++		goto destroy_event_skel;
 +
 +	printf("Process monitor started, waiting for new process to be created...\n");
 +
-+	rb = ring_buffer__new(bpf_map__fd(skel->maps.rb), handle_event, NULL, NULL);
++	rb = ring_buffer__new(bpf_map__fd(event_skel->maps.rb), handle_event, NULL, NULL);
 +	if (!rb) {
-+		fprintf(stderr, "Create Ring Buffer failed.\n");
-+		err = -1;
-+		goto cleanup;
++		err = -EINVAL;
++		goto destroy_event_skel;
 +	}
 +
 +	while (true) {
 +		err = ring_buffer__poll(rb, 100); /* overtime(ms) */
-+		if (err == -EINTR) { /* Interrupted by the signal, exit normally */
-+			err = 0;
-+			break;
-+		}
 +		if (err < 0) {
 +			fprintf(stderr, "Poll Ring Buffer failed: %d\n", err);
 +			break;
 +		}
 +	}
 +
-+cleanup:
-+	if (rb)
-+		ring_buffer__free(rb);
-+	mthp_event__destroy(skel);
++	ring_buffer__free(rb);
++destroy_event_skel:
++	mthp_event__destroy(event_skel);
++destroy_adjust_link:
++	bpf_link__destroy(default_adjust_link);
++destroy_adjust_skel:
++	mthp_adjust__destroy(default_adjust_skel);
 +
 +	return err;
 +}
 diff --git a/tools/mem_ext/mthp_event.bpf.c b/tools/mem_ext/mthp_event.bpf.c
 new file mode 100644
-index 000000000000..75b1d6574e5a
+index 000000000000..4c78acd074f1
 --- /dev/null
 +++ b/tools/mem_ext/mthp_event.bpf.c
-@@ -0,0 +1,49 @@
+@@ -0,0 +1,91 @@
 +#include "vmlinux.h"
 +#include <bpf/bpf_helpers.h>
 +#include <bpf/bpf_tracing.h>
@@ -873,10 +919,45 @@ index 000000000000..75b1d6574e5a
 +	__uint(max_entries, 256 * 1024);
 +} rb SEC(".maps");
 +
++/*
++ * Configure the task names to be monitored.
++ * An empty list indicates monitoring all task. If no tasks are filtered,
++ * performance may be degraded.
++ */
++static const char *target_comms[] = {
++	"a.out",
++	"stream",
++};
++
++#define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
++
++static __always_inline bool is_target_comm(const char *comm)
++{
++	int i;
++
++	if (target_comms[0] == NULL)
++		return true;
++
++#pragma clang loop unroll(full)
++	for (i = 0; i < ARRAY_SIZE(target_comms); i++) {
++		if (!bpf_strncmp(comm, TASK_COMM_LEN, target_comms[i]))
++			return true;
++	}
++
++	return false;
++}
++
 +SEC("tracepoint/sched/sched_process_exec")
 +int tracepoint_sched_process_exec(struct trace_event_raw_sched_process_exec *ctx)
 +{
++	char comm[TASK_COMM_LEN];
 +	struct event *e;
++
++	if (bpf_get_current_comm(comm, sizeof(comm)))
++		return 0;
++
++	if (!is_target_comm(comm))
++		return 0;
 +
 +	e = bpf_ringbuf_reserve(&rb, sizeof(*e), 0);
 +	if (!e)
@@ -893,7 +974,14 @@ index 000000000000..75b1d6574e5a
 +SEC("tracepoint/sched/sched_process_exit")
 +int tracepoint_sched_process_exit(struct trace_event_raw_sched_process_exit *ctx)
 +{
++	char comm[TASK_COMM_LEN];
 +	struct event *e;
++
++	if (bpf_get_current_comm(comm, sizeof(comm)))
++		return 0;
++
++	if (!is_target_comm(comm))
++		return 0;
 +
 +	e = bpf_ringbuf_reserve(&rb, sizeof(*e), 0);
 +	if (!e)
