@@ -1,64 +1,102 @@
 #!/bin/bash
 
-BPF=$(pwd)/build/bin
-UB=~/UnixBench
+cpupower frequency-set -g performance >> /dev/null
 
-echo always > /sys/kernel/mm/transparent_hugepage/enabled
+eBPF=$(pwd)
+CGROUP=/sys/fs/cgroup/mthp
+mkdir -p $CGROUP
 
 function test_a.out()
 {
-	## origin test
-	perf stat -- ./a.out
+	make
+	echo $$ > $CGROUP/cgroup.procs
+	./mthp_set_show.sh -e always
 
-	## thp adjust test
-	$BPF/mthp_adjust &
+	## origin test
+	perf stat -e page-faults -- ./a.out
+
+	## mthp test
+	$eBPF/mthp -d -o 0 &
 	sleep 3
-	perf stat -- ./a.out
-	killall mthp_adjust
+	perf stat -e page-faults -- ./a.out
+	sleep 60
+	killall mthp
+
+	make clean
+}
+
+function test_redis()
+{
+	sleep 60
+	./mthp_set_show.sh -e $1
+	if [ "$2" = "ebpf" ]; then
+		$eBPF/mthp -o 0 -r $CGROUP &
+	fi
+
+	redis-server --save "" --daemonize yes
+	echo 2G > $CGROUP/memory.high
+	echo $(pidof redis-server) > $CGROUP/cgroup.procs
+
+	echo 3 > /proc/sys/vm/drop_caches
+	redis-benchmark --csv -r 3000000 -n 3000000 -d 1024 -c 16 -P 32 -t set
+
+	killall redis-server
+	if [ "$2" = "ebpf" ]; then
+		killall mthp
+	fi
 }
 
 function test_stream()
 {
+	make
+	echo $$ > $CGROUP/cgroup.procs
+	./mthp_set_show.sh -e always
 	export OMP_NUM_THREADS=8
 
 	## origin test
 	sleep 60
 	echo 3 > /proc/sys/vm/drop_caches
+	sleep 60
 	./stream
 
-	## thp adjust test
+	## thp test
 	sleep 60
 	echo 3 > /proc/sys/vm/drop_caches
-	$BPF/mthp_adjust &
-	sleep 3
+	$eBPF/mthp &
+	sleep 60
 	./stream
-	killall mthp_adjust
+	killall mthp
+
+	make clean
 }
 
 function test_unixbench()
 {
-	cd $UB
+	echo $$ > $CGROUP/cgroup.procs
+	./mthp_set_show.sh -e always
+	cd ~/UnixBench
 
 	## origin test
 	sleep 60
 	echo 3 > /proc/sys/vm/drop_caches
+	sleep 60
 	./Run -c 1 shell8
 
-	## thp adjust test
+	## thp test
 	sleep 60
 	echo 3 > /proc/sys/vm/drop_caches
-	$BPF/mthp_adjust &
-	sleep 3
+	$eBPF/mthp &
+	sleep 60
 	./Run -c 1 shell8
-	killall mthp_adjust
+	killall mthp
 
 	cd -
 }
 
-make
 
-test_a.out
+## test_a.out
+test_redis always
+test_redis never
+test_redis always ebpf
 ## test_stream
 ## test_unixbench
-
-make clean
