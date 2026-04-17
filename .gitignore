@@ -9,3 +9,4 @@
 */*.mod.c
 */*.mod.o
 */*.order
+*/log
