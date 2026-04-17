@@ -1,6 +1,6 @@
 #!/bin/bash
 
-cpupower frequency-set -g performance >> /dev/null
+cpupower frequency-set -g performance &> /dev/null
 
 eBPF=$(pwd)
 CGROUP=/sys/fs/cgroup/mthp
