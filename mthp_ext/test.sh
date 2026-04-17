@@ -32,6 +32,7 @@ function test_redis()
 		$eBPF/mthp_ext -o 0 -r $CGROUP &
 	fi
 
+	sysctl -q vm.overcommit_memory=1
 	redis-server --save "" --daemonize yes
 	echo 2G > $CGROUP/memory.high
 	echo $(pidof redis-server) > $CGROUP/cgroup.procs
