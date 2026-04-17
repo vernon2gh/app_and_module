@@ -16,11 +16,10 @@ function test_a.out()
 	perf stat -e page-faults -- ./a.out
 
 	## mthp test
-	$eBPF/mthp -d -o 0 &
-	sleep 3
+	$eBPF/mthp_ext -d -o 0 &
 	perf stat -e page-faults -- ./a.out
 	sleep 60
-	killall mthp
+	killall mthp_ext
 
 	make clean
 }
@@ -30,7 +29,7 @@ function test_redis()
 	sleep 60
 	./mthp_set_show.sh -e $1
 	if [ "$2" = "ebpf" ]; then
-		$eBPF/mthp -o 0 -r $CGROUP &
+		$eBPF/mthp_ext -o 0 -r $CGROUP &
 	fi
 
 	redis-server --save "" --daemonize yes
@@ -42,7 +41,7 @@ function test_redis()
 
 	killall redis-server
 	if [ "$2" = "ebpf" ]; then
-		killall mthp
+		killall mthp_ext
 	fi
 }
 
@@ -62,10 +61,10 @@ function test_stream()
 	## thp test
 	sleep 60
 	echo 3 > /proc/sys/vm/drop_caches
-	$eBPF/mthp &
+	$eBPF/mthp_ext &
 	sleep 60
 	./stream
-	killall mthp
+	killall mthp_ext
 
 	make clean
 }
@@ -85,10 +84,10 @@ function test_unixbench()
 	## thp test
 	sleep 60
 	echo 3 > /proc/sys/vm/drop_caches
-	$eBPF/mthp &
+	$eBPF/mthp_ext &
 	sleep 60
 	./Run -c 1 shell8
-	killall mthp
+	killall mthp_ext
 
 	cd -
 }
