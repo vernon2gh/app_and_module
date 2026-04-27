@@ -4,6 +4,7 @@ cpupower frequency-set -g performance &> /dev/null
 
 eBPF=$(pwd)
 CGROUP=/sys/fs/cgroup/mthp
+rmdir    $CGROUP &> /dev/null
 mkdir -p $CGROUP
 
 function test_a.out()
@@ -27,23 +28,22 @@ function test_a.out()
 function test_redis()
 {
 	sleep 60
-	./mthp_set_show.sh -e $1
-	if [ "$2" = "ebpf" ]; then
-		$eBPF/mthp_ext -o 0 -r $CGROUP &
-	fi
-
 	sysctl -q vm.overcommit_memory=1
 	redis-server --save "" --daemonize yes
 	echo 2G > $CGROUP/memory.high
 	echo $(pidof redis-server) > $CGROUP/cgroup.procs
+	./mthp_set_show.sh -e $1
+	if [ "$2" = "ebpf" ]; then
+		$eBPF/mthp_ext -r $CGROUP &
+	fi
 
 	echo 3 > /proc/sys/vm/drop_caches
 	redis-benchmark --csv -r 3000000 -n 3000000 -d 1024 -c 16 -P 32 -t set
 
-	killall redis-server
 	if [ "$2" = "ebpf" ]; then
 		killall mthp_ext
 	fi
+	killall redis-server
 }
 
 function test_stream()
