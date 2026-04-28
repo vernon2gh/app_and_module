@@ -72,31 +72,32 @@ function test_stream()
 
 function test_unixbench()
 {
+	sleep 60
 	echo $$ > $CGROUP/cgroup.procs
-	./mthp_set_show.sh -e always
+	./mthp_set_show.sh -e $1
+	if [ "$2" = "ebpf" ]; then
+		$eBPF/mthp_ext -r $CGROUP &
+	fi
+
 	cd ~/UnixBench
-
-	## origin test
-	sleep 60
 	echo 3 > /proc/sys/vm/drop_caches
-	sleep 60
-	./Run -c 1 shell8
+	./Run -c 1 shell8 | grep "^System Benchmarks Index Score"
+	cd - &> /dev/null
 
-	## thp test
-	sleep 60
-	echo 3 > /proc/sys/vm/drop_caches
-	$eBPF/mthp_ext &
-	sleep 60
-	./Run -c 1 shell8
-	killall mthp_ext
-
-	cd -
+	if [ "$2" = "ebpf" ]; then
+		killall mthp_ext
+	fi
 }
 
 
 ## test_a.out
+
 test_redis always
 test_redis never
 test_redis always ebpf
+
 ## test_stream
-## test_unixbench
+
+## test_unixbench always
+## test_unixbench never
+## test_unixbench always ebpf
