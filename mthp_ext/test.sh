@@ -7,21 +7,21 @@ CGROUP=/sys/fs/cgroup/mthp
 rmdir    $CGROUP &> /dev/null
 mkdir -p $CGROUP
 
-function test_a.out()
+function test_simply()
 {
 	make
+	echo 64M > $CGROUP/memory.high
 	echo $$ > $CGROUP/cgroup.procs
-	./mthp_set_show.sh -e always
+	./mthp_set_show.sh -e $1
+	if [ "$2" = "ebpf" ]; then
+		$eBPF/mthp_ext -d -r $CGROUP &
+	fi
 
-	## origin test
 	perf stat -e page-faults -- ./a.out
 
-	## mthp test
-	$eBPF/mthp_ext -d -o 0 &
-	perf stat -e page-faults -- ./a.out
-	sleep 60
-	killall mthp_ext
-
+	if [ "$2" = "ebpf" ]; then
+		killall mthp_ext
+	fi
 	make clean
 }
 
@@ -86,7 +86,9 @@ function test_unixbench()
 }
 
 
-## test_a.out
+## test_simply always
+## test_simply never
+## test_simply always ebpf
 
 test_redis always
 test_redis never

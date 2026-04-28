@@ -13,7 +13,6 @@ int main(int argc, char *argv[])
 	char *buffer;
 	int err;
 
-	printf("Current pid: %d\n", getpid());
 	printf("Batch size : %d MB\n", BATCH_SIZE / (1024 * 1024));
 	printf("Batch pages: %d(4KB) or %d(2MB)\n", BATCH_PAGES,
 				BATCH_SIZE / (2 * 1024 * 1024));
