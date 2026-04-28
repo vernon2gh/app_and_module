@@ -48,25 +48,21 @@ function test_redis()
 
 function test_stream()
 {
+	sleep 60
 	make
 	echo $$ > $CGROUP/cgroup.procs
-	./mthp_set_show.sh -e always
+	./mthp_set_show.sh -e $1
+	if [ "$2" = "ebpf" ]; then
+		$eBPF/mthp_ext -r $CGROUP &
+	fi
+
+	echo 3 > /proc/sys/vm/drop_caches
 	export OMP_NUM_THREADS=8
+	./stream | grep -E "Function|Copy|Scale|Add|Triad"
 
-	## origin test
-	sleep 60
-	echo 3 > /proc/sys/vm/drop_caches
-	sleep 60
-	./stream
-
-	## thp test
-	sleep 60
-	echo 3 > /proc/sys/vm/drop_caches
-	$eBPF/mthp_ext &
-	sleep 60
-	./stream
-	killall mthp_ext
-
+	if [ "$2" = "ebpf" ]; then
+		killall mthp_ext
+	fi
 	make clean
 }
 
@@ -96,7 +92,9 @@ test_redis always
 test_redis never
 test_redis always ebpf
 
-## test_stream
+## test_stream always
+## test_stream never
+## test_stream always ebpf
 
 ## test_unixbench always
 ## test_unixbench never
