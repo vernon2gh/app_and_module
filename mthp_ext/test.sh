@@ -29,21 +29,25 @@ function test_redis()
 {
 	sleep 60
 	sysctl -q vm.overcommit_memory=1
-	redis-server --save "" --daemonize yes
+	if [ "$2" = "BGSAVE" ]; then
+		redis-server --daemonize yes
+	else
+		redis-server --save "" --daemonize yes
+	fi
 	echo 2G > $CGROUP/memory.high
 	echo $(pidof redis-server) > $CGROUP/cgroup.procs
 	./mthp_set_show.sh -e $1
-	if [ "$2" = "ebpf" ]; then
+	if [ "$3" = "ebpf" ]; then
 		$eBPF/mthp_ext -r $CGROUP &
 	fi
 
 	echo 3 > /proc/sys/vm/drop_caches
 	redis-benchmark --csv -r 3000000 -n 3000000 -d 1024 -c 16 -P 32 -t set
 
-	if [ "$2" = "ebpf" ]; then
+	if [ "$3" = "ebpf" ]; then
 		killall mthp_ext
 	fi
-	killall redis-server
+	redis-cli SHUTDOWN NOSAVE
 }
 
 function test_stream()
@@ -90,9 +94,13 @@ function test_unixbench()
 ## test_simply never
 ## test_simply always ebpf
 
-test_redis always
-test_redis never
-test_redis always ebpf
+test_redis always NONE
+test_redis never  NONE
+test_redis always NONE ebpf
+
+test_redis always BGSAVE
+test_redis never  BGSAVE
+test_redis always BGSAVE ebpf
 
 ## test_stream always
 ## test_stream never
