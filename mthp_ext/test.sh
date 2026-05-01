@@ -4,7 +4,6 @@ cpupower frequency-set -g performance &> /dev/null
 
 eBPF=$(pwd)
 CGROUP=/sys/fs/cgroup/mthp
-rmdir    $CGROUP &> /dev/null
 mkdir -p $CGROUP
 
 function test_simply()
@@ -14,7 +13,7 @@ function test_simply()
 	echo $$ > $CGROUP/cgroup.procs
 	./mthp_set_show.sh -e $1
 	if [ "$2" = "ebpf" ]; then
-		$eBPF/mthp_ext -d -r $CGROUP &
+		$eBPF/mthp_ext -d &
 	fi
 
 	perf stat -e page-faults -- ./a.out
@@ -22,6 +21,7 @@ function test_simply()
 	if [ "$2" = "ebpf" ]; then
 		killall mthp_ext
 	fi
+	echo max > $CGROUP/memory.high
 	make clean
 }
 
@@ -38,7 +38,7 @@ function test_redis()
 	echo $(pidof redis-server) > $CGROUP/cgroup.procs
 	./mthp_set_show.sh -e $1
 	if [ "$3" = "ebpf" ]; then
-		$eBPF/mthp_ext -r $CGROUP &
+		$eBPF/mthp_ext &
 	fi
 
 	echo 3 > /proc/sys/vm/drop_caches
@@ -47,6 +47,7 @@ function test_redis()
 	if [ "$3" = "ebpf" ]; then
 		killall mthp_ext
 	fi
+	echo max > $CGROUP/memory.high
 	redis-cli SHUTDOWN NOSAVE
 }
 
@@ -57,7 +58,7 @@ function test_stream()
 	echo $$ > $CGROUP/cgroup.procs
 	./mthp_set_show.sh -e $1
 	if [ "$2" = "ebpf" ]; then
-		$eBPF/mthp_ext -r $CGROUP &
+		$eBPF/mthp_ext &
 	fi
 
 	echo 3 > /proc/sys/vm/drop_caches
@@ -72,14 +73,16 @@ function test_stream()
 
 function test_unixbench()
 {
+	UB=~/UnixBench
+
 	sleep 60
 	echo $$ > $CGROUP/cgroup.procs
 	./mthp_set_show.sh -e $1
 	if [ "$2" = "ebpf" ]; then
-		$eBPF/mthp_ext -r $CGROUP &
+		$eBPF/mthp_ext &
 	fi
 
-	cd ~/UnixBench
+	cd $UB
 	echo 3 > /proc/sys/vm/drop_caches
 	./Run -c 1 shell8 | grep "^System Benchmarks Index Score"
 	cd - &> /dev/null
@@ -88,7 +91,6 @@ function test_unixbench()
 		killall mthp_ext
 	fi
 }
-
 
 ## test_simply always
 ## test_simply never
