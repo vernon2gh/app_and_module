@@ -34,17 +34,17 @@ function test_redis()
 	else
 		redis-server --save "" --daemonize yes
 	fi
-	echo 2G > $CGROUP/memory.high
+	echo $3 > $CGROUP/memory.high
 	echo $(pidof redis-server) > $CGROUP/cgroup.procs
 	./mthp_set_show.sh -e $1
-	if [ "$3" = "ebpf" ]; then
+	if [ "$4" = "ebpf" ]; then
 		$eBPF/mthp_ext &
 	fi
 
 	echo 3 > /proc/sys/vm/drop_caches
 	redis-benchmark --csv -r 3000000 -n 3000000 -d 1024 -c 16 -P 32 -t set
 
-	if [ "$3" = "ebpf" ]; then
+	if [ "$4" = "ebpf" ]; then
 		killall mthp_ext
 	fi
 	echo max > $CGROUP/memory.high
@@ -96,13 +96,21 @@ function test_unixbench()
 ## test_simply never
 ## test_simply always ebpf
 
-test_redis always NONE
-test_redis never  NONE
-test_redis always NONE ebpf
+test_redis always noBGSAVE max
+test_redis never  noBGSAVE max
+test_redis always noBGSAVE max ebpf
 
-test_redis always BGSAVE
-test_redis never  BGSAVE
-test_redis always BGSAVE ebpf
+test_redis always BGSAVE max
+test_redis never  BGSAVE max
+test_redis always BGSAVE max ebpf
+
+test_redis always noBGSAVE 2G
+test_redis never  noBGSAVE 2G
+test_redis always noBGSAVE 2G ebpf
+
+test_redis always BGSAVE 2G
+test_redis never  BGSAVE 2G
+test_redis always BGSAVE 2G ebpf
 
 ## test_stream always
 ## test_stream never
