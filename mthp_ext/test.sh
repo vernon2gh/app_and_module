@@ -116,6 +116,6 @@ test_redis always BGSAVE 2G ebpf
 ## test_stream never
 ## test_stream always ebpf
 
-## test_unixbench always
-## test_unixbench never
-## test_unixbench always ebpf
+test_unixbench always
+test_unixbench never
+test_unixbench always ebpf
