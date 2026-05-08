@@ -15,6 +15,7 @@ function test_simply()
 	if [ "$2" = "ebpf" ]; then
 		$eBPF/mthp_ext -d &
 	fi
+	sleep 3
 
 	perf stat -e page-faults -- ./a.out
 
@@ -40,6 +41,7 @@ function test_redis()
 	if [ "$4" = "ebpf" ]; then
 		$eBPF/mthp_ext &
 	fi
+	sleep 3
 
 	echo 3 > /proc/sys/vm/drop_caches
 	redis-benchmark --csv -r 3000000 -n 3000000 -d 1024 -c 16 -P 32 -t set
@@ -60,6 +62,7 @@ function test_stream()
 	if [ "$2" = "ebpf" ]; then
 		$eBPF/mthp_ext &
 	fi
+	sleep 3
 
 	echo 3 > /proc/sys/vm/drop_caches
 	export OMP_NUM_THREADS=8
@@ -81,6 +84,7 @@ function test_unixbench()
 	if [ "$2" = "ebpf" ]; then
 		$eBPF/mthp_ext &
 	fi
+	sleep 3
 
 	cd $UB
 	echo 3 > /proc/sys/vm/drop_caches
