@@ -71,21 +71,16 @@ function test_khugepaged() {
 	stats
 }
 
-echo "================ test anon ================"
+function test_madvise() {
+	$PERF ./a.out madvise
+
+	stats
+}
+
 test_anon
-
-echo "============== test shm anon =============="
 test_shm_anon
-
-echo "============= test shm tmpfs ============="
 test_shm_tmpfs
-
-echo "========== test shm tmpfs posix =========="
 test_shm_tmpfs_posix
-
-echo "====== test shm tmpfs systemv (bad) ======"
 test_shm_tmpfs_systemv
-
-echo "============ test khugepaged ============"
 test_khugepaged
-
+test_madvise

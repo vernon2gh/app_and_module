@@ -19,6 +19,7 @@ enum demo_entry {
 	DEMO_SHM_POSIX_WRITE,
 	DEMO_SHM_SYSTEMV_WRITE,
 	DEMO_KHUGEPAGED,
+	DEMO_MADVISE,
 	DEMO_ENTRY_MAX,
 };
 
@@ -28,6 +29,7 @@ static char *string[DEMO_ENTRY_MAX] = {
 	"shm_posix_write",
 	"shm_systemv_write",
 	"khugepaged",
+	"madvise",
 };
 
 static enum demo_entry test_demo_entry(char *entry)
@@ -125,6 +127,27 @@ static void test_khugepaged(void)
 	munmap(buf, size);
 }
 
+static void test_madvise(void)
+{
+	int size = 1024 * 1024 * 1024; // 1G
+	volatile char tmp;
+	char *buf;
+	int i;
+
+	buf = mmap(0, size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+	buf[0] = 0;           /* one page backed by physical memory */
+	for (i = 0; i < size; i += 4096)
+		tmp = buf[i]; /* zero-page */
+
+        /*
+         * For every eligible hugepage-aligned/sized region to be collapsed,
+	 * at least one page must currently backed by physical memory.
+         */
+        madvise(buf, size, MADV_COLLAPSE);
+
+	munmap(buf, size);
+}
+
 int main(int argc, char *argv[])
 {
 	dynamic_debug_start();
@@ -145,6 +168,9 @@ int main(int argc, char *argv[])
 			break;
 		case DEMO_KHUGEPAGED:
 			test_khugepaged();
+			break;
+		case DEMO_MADVISE:
+			test_madvise();
 			break;
 	}
 
