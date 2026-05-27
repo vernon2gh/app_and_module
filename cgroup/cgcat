@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-cgcat - Display cgroup resource data in tree form.
+cgcat - Display cgroup resource data, default flat list (-t for tree).
 
-Reads cgroup v2 files (default: memory.stat) and displays them as a tree.
-Patterns (-g, -k) support regex via re.search.
+Reads cgroup v2 files (default: memory.stat).
+Patterns (-g, -k, -p) support regex via re.search.
 
 Usage:
-    cgcat                                   # tree of all cgroups, all keys
+    cgcat                                   # flat list of all cgroups, all keys
     cgcat -k '^anon$'                       # exact key match
     cgcat -k 'anon|file|slab'               # regex on keys
     cgcat -k 'pgscan.*'                     # all pgscan variants
@@ -305,11 +305,7 @@ def monitor_loop(dirs, data_file, key_res, value_filter, extras, interval,
                 print_tree(root, data_file, key_res, value_filter, extras,
                            cgroup_re, path_set)
             else:
-                for d in dirs:
-                    stat = parse_stat_file(os.path.join(d, data_file))
-                    name = d.replace(CGROUP_ROOT, '') or '/'
-                    val_str = format_stat(stat, key_res, value_filter, extras)
-                    print(f"  {name}  {val_str}")
+                print_plain(dirs, data_file, key_res, value_filter, extras)
 
             # Collect CSV data
             for d in dirs:
@@ -402,7 +398,7 @@ def write_plotly_chart(rows, html_path):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Display cgroup resource data in tree form')
+        description='Display cgroup resource data')
     parser.add_argument('-g', '--cgroup', default=None,
                         help='Show only cgroups matching this path segment')
     parser.add_argument('-p', '--process', default=None,
@@ -486,15 +482,12 @@ def main():
             print_plain(dirs, args.file, key_res, value_filter, extras)
         return
     else:
-        root_path = CGROUP_ROOT
-
-    # Build data
-    if args.tree:
-        root = build_tree(root_path, args.depth)
-        print_tree(root, args.file, key_res, value_filter, extras)
-    else:
-        dirs = collect_flat(root_path, args.depth)
-        print_plain(dirs, args.file, key_res, value_filter, extras)
+        if args.tree:
+            root = build_tree(CGROUP_ROOT, args.depth)
+            print_tree(root, args.file, key_res, value_filter, extras)
+        else:
+            dirs = collect_flat(CGROUP_ROOT, args.depth)
+            print_plain(dirs, args.file, key_res, value_filter, extras)
 
 
 if __name__ == '__main__':
