@@ -20,13 +20,17 @@ Usage:
     cgcat -v '>:100M' -k anon               # values > 100M
     cgcat -e 'scale=$pgsteal/$pgscan'       # extra computed expression
     cgcat -e 'a=$anon/$file,b=$anon'        # multiple extras (comma-separated)
+    cgcat -m 1 -k '^anon$'                  # monitor every 1s
     cgcat -p                                # plain list (no tree)
 """
 
 import argparse
+import csv
 import os
 import re
 import sys
+import time
+from datetime import datetime
 
 CGROUP_ROOT = "/sys/fs/cgroup"
 
@@ -266,6 +270,122 @@ def resolve_proc_cgroups(pattern):
     return sorted(cgroups.items(), key=lambda x: x[0])
 
 
+def monitor_loop(dirs, data_file, key_res, value_filter, extras, interval,
+                 use_tree, cgroup_re=None):
+    """Repeatedly read and display cgroup data, collect rows for CSV."""
+    rows = []
+    t0 = time.time()
+    tick = 0
+
+    try:
+        while True:
+            now = datetime.now()
+            timestamp = now.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+
+            print("\033[2J\033[H", end="")
+            print(f"cgcat -m {interval}s | {timestamp} | tick={tick} | Ctrl-C to save\n")
+
+            if use_tree:
+                root = build_tree(CGROUP_ROOT, None)
+                if cgroup_re:
+                    mark_tree_visible(root, cgroup_re)
+                print_tree(root, data_file, key_res, value_filter, extras, cgroup_re)
+            else:
+                for d in dirs:
+                    stat = parse_stat_file(os.path.join(d, data_file))
+                    name = d.replace(CGROUP_ROOT, '') or '/'
+                    val_str = format_stat(stat, key_res, value_filter, extras)
+                    print(f"  {name}  {val_str}")
+
+            # Collect CSV data
+            for d in dirs:
+                stat = parse_stat_file(os.path.join(d, data_file))
+                row = {'timestamp': timestamp,
+                       'cgroup': os.path.basename(d) or '/'}
+                for k, v in stat.items():
+                    if key_res is not None and not any(r.search(k) for r in key_res):
+                        continue
+                    if isinstance(v, int):
+                        row[k] = v
+                rows.append(row)
+
+            sys.stdout.flush()
+            tick += 1
+
+            elapsed = time.time() - t0
+            sleep_for = interval - (elapsed % interval)
+            if sleep_for > 0:
+                time.sleep(sleep_for)
+    except KeyboardInterrupt:
+        write_csv(rows, key_res)
+
+
+def write_csv(rows, key_res):
+    """Write collected monitoring data to a CSV file."""
+    if not rows:
+        print("\nNo data collected.")
+        return
+
+    columns = ['timestamp', 'cgroup']
+    key_set = set()
+    for row in rows:
+        key_set.update(k for k in row if k not in columns)
+    columns.extend(sorted(key_set))
+
+    filename = f"cgcat_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    with open(filename, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=columns, extrasaction='ignore')
+        writer.writeheader()
+        writer.writerows(rows)
+
+    print(f"\nSaved {len(rows)} rows to {filename}")
+
+    html_path = filename.replace('.csv', '.html')
+    write_plotly_chart(rows, html_path)
+
+
+def write_plotly_chart(rows, html_path):
+    """Generate an interactive plotly HTML chart from monitoring data."""
+    try:
+        import plotly.graph_objects as go
+    except ImportError:
+        return
+
+    cg_data = {}
+    for row in rows:
+        cg = row['cgroup']
+        if cg not in cg_data:
+            cg_data[cg] = {'timestamps': [], 'keys': {}}
+        cg_data[cg]['timestamps'].append(row['timestamp'])
+        for k, v in row.items():
+            if k in ('timestamp', 'cgroup'):
+                continue
+            if k not in cg_data[cg]['keys']:
+                cg_data[cg]['keys'][k] = []
+            cg_data[cg]['keys'][k].append(v if isinstance(v, (int, float)) else None)
+
+    fig = go.Figure()
+    for cg, data in cg_data.items():
+        for key, values in data['keys'].items():
+            if any(v is not None for v in values):
+                hover_vals = [human_size(v) if v is not None else 'N/A' for v in values]
+                fig.add_trace(go.Scatter(
+                    x=data['timestamps'], y=values,
+                    mode='lines+markers', name=f"{cg}:{key}",
+                    hovertemplate="%{customdata}<extra></extra>",
+                    customdata=hover_vals
+                ))
+
+    fig.update_layout(
+        title='cgcat Monitor',
+        xaxis_title='Time', yaxis_title='Value',
+        hovermode='x unified', legend=dict(font=dict(size=10)),
+        yaxis=dict(exponentformat='none', separatethousands=True)
+    )
+    fig.write_html(html_path)
+    print(f"Chart saved to {html_path}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Display cgroup resource data in tree form')
@@ -283,6 +403,8 @@ def main():
                         help='Filter keys by value, e.g. ">:1M", "<:1G", ">=:1048576"')
     parser.add_argument('-e', '--extra', default=None, metavar='NAME=EXP',
                         help='Extra computed expressions, e.g. "scale=$a/$b"')
+    parser.add_argument('-m', '--monitor', type=float, default=None, metavar='SEC',
+                        help='Monitor mode, refresh every SEC seconds')
     parser.add_argument('-p', '--plain', action='store_true',
                         help='Flat listing instead of tree')
     args = parser.parse_args()
@@ -298,6 +420,24 @@ def main():
 
     if not os.path.isdir(CGROUP_ROOT):
         sys.exit(f"Error: {CGROUP_ROOT} not found. Is cgroup v2 mounted?")
+
+    # Monitor mode
+    if args.monitor:
+        cg_re = None
+        if args.task:
+            cgroups = resolve_proc_cgroups(args.task)
+            dirs = [cg_path for cg_path, _ in cgroups]
+        elif args.cgroup:
+            cg_re = re.compile(args.cgroup, re.IGNORECASE)
+            dirs = collect_flat(CGROUP_ROOT, None)
+            dirs = match_cgroup(dirs, args.cgroup)
+            if not dirs:
+                sys.exit(f"No cgroup found matching '{args.cgroup}'")
+        else:
+            dirs = collect_flat(CGROUP_ROOT, None)
+        monitor_loop(dirs, args.file, key_res, value_filter, extras,
+                     args.monitor, not args.plain, cg_re)
+        return
 
     # Determine root path
     if args.task:
