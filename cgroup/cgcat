@@ -13,15 +13,15 @@ Usage:
     cgcat -g 'sshd'                         # cgroups whose path contains sshd
     cgcat -g '^system.slice$'               # exact cgroup basename
     cgcat -g 'system.slice/.*'              # all under system.slice
-    cgcat -t sshd                           # cgroups containing process sshd
-    cgcat -t 'sshd|nginx'                   # regex on process name
+    cgcat -p sshd                           # cgroups containing process sshd
+    cgcat -p 'sshd|nginx'                   # regex on process name
     cgcat -f cpu.stat                       # read cpu.stat instead
     cgcat -d 3                              # limit tree depth
     cgcat -v '>:100M' -k anon               # values > 100M
     cgcat -e 'scale=$pgsteal/$pgscan'       # extra computed expression
     cgcat -e 'a=$anon/$file,b=$anon'        # multiple extras (comma-separated)
     cgcat -m 1 -k '^anon$'                  # monitor every 1s
-    cgcat -p                                # plain list (no tree)
+    cgcat -t                                # tree display mode
 """
 
 import argparse
@@ -405,8 +405,8 @@ def main():
         description='Display cgroup resource data in tree form')
     parser.add_argument('-g', '--cgroup', default=None,
                         help='Show only cgroups matching this path segment')
-    parser.add_argument('-t', '--task', default=None, metavar='PATTERN',
-                        help='Show cgroups containing processes matching this name pattern')
+    parser.add_argument('-p', '--process', default=None,
+                        help='Show cgroups containing processes matching name')
     parser.add_argument('-f', '--file', default='memory.stat',
                         help='Cgroup data file to read (default: memory.stat)')
     parser.add_argument('-k', '--keys', default=None,
@@ -419,8 +419,8 @@ def main():
                         help='Extra computed expressions, e.g. "scale=$a/$b"')
     parser.add_argument('-m', '--monitor', type=float, default=None, metavar='SEC',
                         help='Monitor mode, refresh every SEC seconds')
-    parser.add_argument('-p', '--plain', action='store_true',
-                        help='Flat listing instead of tree')
+    parser.add_argument('-t', '--tree', action='store_true',
+                        help='Tree display mode')
     args = parser.parse_args()
 
     if args.keys:
@@ -439,8 +439,8 @@ def main():
     if args.monitor:
         cg_re = None
         path_set = None
-        if args.task:
-            cgroups = resolve_proc_cgroups(args.task)
+        if args.process:
+            cgroups = resolve_proc_cgroups(args.process)
             dirs = [cg_path for cg_path, _ in cgroups]
             path_set = {cg_path for cg_path, _ in cgroups}
         elif args.cgroup:
@@ -452,49 +452,49 @@ def main():
         else:
             dirs = collect_flat(CGROUP_ROOT, None)
         monitor_loop(dirs, args.file, key_res, value_filter, extras,
-                     args.monitor, not args.plain, cg_re, path_set)
+                     args.monitor, args.tree, cg_re, path_set)
         return
 
     # Determine root path
-    if args.task:
-        cgroups = resolve_proc_cgroups(args.task)
+    if args.process:
+        cgroups = resolve_proc_cgroups(args.process)
         path_set = {cg_path for cg_path, _ in cgroups}
-        if args.plain:
+        if args.tree:
+            root = build_tree(CGROUP_ROOT, args.depth)
+            mark_tree_by_paths(root, path_set)
+            print_tree(root, args.file, key_res, value_filter, extras, path_set=path_set)
+        else:
             for cg_path in sorted(path_set):
                 stat = parse_stat_file(os.path.join(cg_path, args.file))
                 name = cg_path.replace(CGROUP_ROOT, '') or '/'
                 val_str = format_stat(stat, key_res, value_filter, extras)
                 print(f"{name}  {val_str}")
-        else:
-            root = build_tree(CGROUP_ROOT, args.depth)
-            mark_tree_by_paths(root, path_set)
-            print_tree(root, args.file, key_res, value_filter, extras, path_set=path_set)
         return
     elif args.cgroup:
         cg_re = re.compile(args.cgroup, re.IGNORECASE)
-        if args.plain:
-            dirs = collect_flat(CGROUP_ROOT, args.depth)
-            dirs = match_cgroup(dirs, args.cgroup)
-            if not dirs:
-                sys.exit(f"No cgroup found matching '{args.cgroup}'")
-            print_plain(dirs, args.file, key_res, value_filter, extras)
-        else:
+        if args.tree:
             root = build_tree(CGROUP_ROOT, args.depth)
             mark_tree_visible(root, cg_re)
             if not root['visible']:
                 sys.exit(f"No cgroup found matching '{args.cgroup}'")
             print_tree(root, args.file, key_res, value_filter, extras, cg_re)
+        else:
+            dirs = collect_flat(CGROUP_ROOT, args.depth)
+            dirs = match_cgroup(dirs, args.cgroup)
+            if not dirs:
+                sys.exit(f"No cgroup found matching '{args.cgroup}'")
+            print_plain(dirs, args.file, key_res, value_filter, extras)
         return
     else:
         root_path = CGROUP_ROOT
 
     # Build data
-    if args.plain:
-        dirs = collect_flat(root_path, args.depth)
-        print_plain(dirs, args.file, key_res, value_filter, extras)
-    else:
+    if args.tree:
         root = build_tree(root_path, args.depth)
         print_tree(root, args.file, key_res, value_filter, extras)
+    else:
+        dirs = collect_flat(root_path, args.depth)
+        print_plain(dirs, args.file, key_res, value_filter, extras)
 
 
 if __name__ == '__main__':
