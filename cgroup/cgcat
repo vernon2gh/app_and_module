@@ -18,6 +18,8 @@ Usage:
     cgcat -f cpu.stat                       # read cpu.stat instead
     cgcat -d 3                              # limit tree depth
     cgcat -v '>:100M' -k anon               # values > 100M
+    cgcat -e 'scale=$pgsteal/$pgscan'       # extra computed expression
+    cgcat -e 'a=$anon/$file,b=$anon'        # multiple extras (comma-separated)
     cgcat -p                                # plain list (no tree)
 """
 
@@ -105,7 +107,7 @@ def match_cgroup(dirs, pattern):
         d.replace(CGROUP_ROOT, '').lstrip('/') or '/')]
 
 
-def format_stat(stat, key_res, value_filter):
+def format_stat(stat, key_res, value_filter, extras=None):
     """Filter and format stat dict entries into a display string."""
     vals = []
     for k, v in stat.items():
@@ -115,6 +117,9 @@ def format_stat(stat, key_res, value_filter):
             if not value_filter(v):
                 continue
         vals.append(f"{k}={human_size(v)}")
+    if extras:
+        for name, expr in extras:
+            vals.append(f"{name}={compute_extra_expr(expr, stat)}")
     return ", ".join(vals) if vals else "(no data)"
 
 
@@ -128,7 +133,8 @@ def mark_tree_visible(node, cgroup_re):
     return node['visible']
 
 
-def print_tree(node, data_file, key_res, value_filter, cgroup_re=None, prefix="", is_last=True):
+def print_tree(node, data_file, key_res, value_filter, extras=None, cgroup_re=None,
+               prefix="", is_last=True):
     """Recursively print a cgroup tree with data."""
     visible_children = [c for c in node['children'] if c.get('visible', True)] if cgroup_re else node['children']
 
@@ -140,23 +146,23 @@ def print_tree(node, data_file, key_res, value_filter, cgroup_re=None, prefix=""
 
     stat_path = os.path.join(node['path'], data_file)
     stat = parse_stat_file(stat_path)
-    val_str = format_stat(stat, key_res, value_filter)
+    val_str = format_stat(stat, key_res, value_filter, extras)
 
     name = node['name']
     print(f"{prefix}{branch}{name}  {val_str}")
 
     for i, child in enumerate(visible_children):
-        print_tree(child, data_file, key_res, value_filter, cgroup_re,
+        print_tree(child, data_file, key_res, value_filter, extras, cgroup_re,
                    prefix + connector, i == len(visible_children) - 1)
 
 
-def print_plain(dirs, data_file, key_res, value_filter):
+def print_plain(dirs, data_file, key_res, value_filter, extras=None):
     """Print a flat listing with full paths."""
     for d in dirs:
         stat_path = os.path.join(d, data_file)
         stat = parse_stat_file(stat_path)
         name = d.replace(CGROUP_ROOT, '') or '/'
-        val_str = format_stat(stat, key_res, value_filter)
+        val_str = format_stat(stat, key_res, value_filter, extras)
         print(f"{name}  {val_str}")
 
 
@@ -191,6 +197,39 @@ def parse_value_filter(raw):
     if op not in ops:
         sys.exit(f"Invalid filter operator: {op} (expected >, <, >=, <=, =)")
     return ops[op]
+
+
+def compute_extra_expr(expr, stat):
+    """Evaluate expr like '$pgsteal/$pgscan' -> '0.68'."""
+    def sub_var(m):
+        val = stat.get(m.group(1), 0)
+        return str(val) if isinstance(val, int) else '0'
+
+    expanded = re.sub(r'\$([a-zA-Z_]\w*)', sub_var, expr).strip()
+    try:
+        result = eval(expanded, {'__builtins__': {}})
+    except ZeroDivisionError:
+        return 'N/A'
+    except Exception:
+        return expanded
+
+    if isinstance(result, float):
+        return f"{result:.2f}"
+    return str(result)
+
+
+def parse_extra_args(raw):
+    """Parse '-e' string into [(name, expr_template), ...]."""
+    extras = []
+    for item in raw.split(','):
+        item = item.strip()
+        if not item:
+            continue
+        if '=' not in item:
+            sys.exit(f"Invalid extra format: {item} (expected NAME=EXPR)")
+        name, expr = item.split('=', 1)
+        extras.append((name.strip(), expr.strip()))
+    return extras
 
 
 def resolve_proc_cgroups(pattern):
@@ -242,6 +281,8 @@ def main():
                         help='Maximum tree depth (default: unlimited)')
     parser.add_argument('-v', '--filter', default=None, metavar='OP:VAL',
                         help='Filter keys by value, e.g. ">:1M", "<:1G", ">=:1048576"')
+    parser.add_argument('-e', '--extra', default=None, metavar='NAME=EXP',
+                        help='Extra computed expressions, e.g. "scale=$a/$b"')
     parser.add_argument('-p', '--plain', action='store_true',
                         help='Flat listing instead of tree')
     args = parser.parse_args()
@@ -251,8 +292,9 @@ def main():
     else:
         key_res = None  # default: show all
 
-    # Parse value filter
+    # Parse value filter and extra expressions
     value_filter = parse_value_filter(args.filter) if args.filter else None
+    extras = parse_extra_args(args.extra) if args.extra else None
 
     if not os.path.isdir(CGROUP_ROOT):
         sys.exit(f"Error: {CGROUP_ROOT} not found. Is cgroup v2 mounted?")
@@ -263,7 +305,7 @@ def main():
         for cg_path, _ in cgroups:
             stat = parse_stat_file(os.path.join(cg_path, args.file))
             name = cg_path.replace(CGROUP_ROOT, '') or '/'
-            val_str = format_stat(stat, key_res, value_filter)
+            val_str = format_stat(stat, key_res, value_filter, extras)
             print(f"{name}  {val_str}")
         return
     elif args.cgroup:
@@ -273,13 +315,13 @@ def main():
             dirs = match_cgroup(dirs, args.cgroup)
             if not dirs:
                 sys.exit(f"No cgroup found matching '{args.cgroup}'")
-            print_plain(dirs, args.file, key_res, value_filter)
+            print_plain(dirs, args.file, key_res, value_filter, extras)
         else:
             root = build_tree(CGROUP_ROOT, args.depth)
             mark_tree_visible(root, cg_re)
             if not root['visible']:
                 sys.exit(f"No cgroup found matching '{args.cgroup}'")
-            print_tree(root, args.file, key_res, value_filter, cg_re)
+            print_tree(root, args.file, key_res, value_filter, extras, cg_re)
         return
     else:
         root_path = CGROUP_ROOT
@@ -287,10 +329,10 @@ def main():
     # Build data
     if args.plain:
         dirs = collect_flat(root_path, args.depth)
-        print_plain(dirs, args.file, key_res, value_filter)
+        print_plain(dirs, args.file, key_res, value_filter, extras)
     else:
         root = build_tree(root_path, args.depth)
-        print_tree(root, args.file, key_res, value_filter)
+        print_tree(root, args.file, key_res, value_filter, extras)
 
 
 if __name__ == '__main__':
