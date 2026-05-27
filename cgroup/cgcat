@@ -137,12 +137,23 @@ def mark_tree_visible(node, cgroup_re):
     return node['visible']
 
 
-def print_tree(node, data_file, key_res, value_filter, extras=None, cgroup_re=None,
-               prefix="", is_last=True):
-    """Recursively print a cgroup tree with data."""
-    visible_children = [c for c in node['children'] if c.get('visible', True)] if cgroup_re else node['children']
+def mark_tree_by_paths(node, path_set, parent_matched=False):
+    """Mark visible nodes: those in path_set, plus their ancestors and descendants."""
+    matched = node['path'] in path_set or parent_matched
+    node['visible'] = matched
+    for child in node['children']:
+        if mark_tree_by_paths(child, path_set, matched):
+            node['visible'] = True
+    return node['visible']
 
-    if not visible_children and cgroup_re and not node.get('visible'):
+
+def print_tree(node, data_file, key_res, value_filter, extras=None, cgroup_re=None,
+               path_set=None, prefix="", is_last=True):
+    """Recursively print a cgroup tree with data."""
+    use_filter = cgroup_re or path_set
+    visible_children = [c for c in node['children'] if c.get('visible', True)] if use_filter else node['children']
+
+    if not visible_children and use_filter and not node.get('visible'):
         return
 
     branch = "└── " if is_last else "├── "
@@ -156,7 +167,7 @@ def print_tree(node, data_file, key_res, value_filter, extras=None, cgroup_re=No
     print(f"{prefix}{branch}{name}  {val_str}")
 
     for i, child in enumerate(visible_children):
-        print_tree(child, data_file, key_res, value_filter, extras, cgroup_re,
+        print_tree(child, data_file, key_res, value_filter, extras, cgroup_re, path_set,
                    prefix + connector, i == len(visible_children) - 1)
 
 
@@ -271,7 +282,7 @@ def resolve_proc_cgroups(pattern):
 
 
 def monitor_loop(dirs, data_file, key_res, value_filter, extras, interval,
-                 use_tree, cgroup_re=None):
+                 use_tree, cgroup_re=None, path_set=None):
     """Repeatedly read and display cgroup data, collect rows for CSV."""
     rows = []
     t0 = time.time()
@@ -289,7 +300,10 @@ def monitor_loop(dirs, data_file, key_res, value_filter, extras, interval,
                 root = build_tree(CGROUP_ROOT, None)
                 if cgroup_re:
                     mark_tree_visible(root, cgroup_re)
-                print_tree(root, data_file, key_res, value_filter, extras, cgroup_re)
+                elif path_set:
+                    mark_tree_by_paths(root, path_set)
+                print_tree(root, data_file, key_res, value_filter, extras,
+                           cgroup_re, path_set)
             else:
                 for d in dirs:
                     stat = parse_stat_file(os.path.join(d, data_file))
@@ -424,9 +438,11 @@ def main():
     # Monitor mode
     if args.monitor:
         cg_re = None
+        path_set = None
         if args.task:
             cgroups = resolve_proc_cgroups(args.task)
             dirs = [cg_path for cg_path, _ in cgroups]
+            path_set = {cg_path for cg_path, _ in cgroups}
         elif args.cgroup:
             cg_re = re.compile(args.cgroup, re.IGNORECASE)
             dirs = collect_flat(CGROUP_ROOT, None)
@@ -436,17 +452,23 @@ def main():
         else:
             dirs = collect_flat(CGROUP_ROOT, None)
         monitor_loop(dirs, args.file, key_res, value_filter, extras,
-                     args.monitor, not args.plain, cg_re)
+                     args.monitor, not args.plain, cg_re, path_set)
         return
 
     # Determine root path
     if args.task:
         cgroups = resolve_proc_cgroups(args.task)
-        for cg_path, _ in cgroups:
-            stat = parse_stat_file(os.path.join(cg_path, args.file))
-            name = cg_path.replace(CGROUP_ROOT, '') or '/'
-            val_str = format_stat(stat, key_res, value_filter, extras)
-            print(f"{name}  {val_str}")
+        path_set = {cg_path for cg_path, _ in cgroups}
+        if args.plain:
+            for cg_path in sorted(path_set):
+                stat = parse_stat_file(os.path.join(cg_path, args.file))
+                name = cg_path.replace(CGROUP_ROOT, '') or '/'
+                val_str = format_stat(stat, key_res, value_filter, extras)
+                print(f"{name}  {val_str}")
+        else:
+            root = build_tree(CGROUP_ROOT, args.depth)
+            mark_tree_by_paths(root, path_set)
+            print_tree(root, args.file, key_res, value_filter, extras, path_set=path_set)
         return
     elif args.cgroup:
         cg_re = re.compile(args.cgroup, re.IGNORECASE)
