@@ -1,0 +1,297 @@
+#!/usr/bin/env python3
+"""
+cgcat - Display cgroup resource data in tree form.
+
+Reads cgroup v2 files (default: memory.stat) and displays them as a tree.
+Patterns (-g, -k) support regex via re.search.
+
+Usage:
+    cgcat                                   # tree of all cgroups, all keys
+    cgcat -k '^anon$'                       # exact key match
+    cgcat -k 'anon|file|slab'               # regex on keys
+    cgcat -k 'pgscan.*'                     # all pgscan variants
+    cgcat -g 'sshd'                         # cgroups whose path contains sshd
+    cgcat -g '^system.slice$'               # exact cgroup basename
+    cgcat -g 'system.slice/.*'              # all under system.slice
+    cgcat -t sshd                           # cgroups containing process sshd
+    cgcat -t 'sshd|nginx'                   # regex on process name
+    cgcat -f cpu.stat                       # read cpu.stat instead
+    cgcat -d 3                              # limit tree depth
+    cgcat -v '>:100M' -k anon               # values > 100M
+    cgcat -p                                # plain list (no tree)
+"""
+
+import argparse
+import os
+import re
+import sys
+
+CGROUP_ROOT = "/sys/fs/cgroup"
+
+
+def human_size(v):
+    """Convert a raw byte value to a human-readable string."""
+    if not isinstance(v, int):
+        return str(v)
+    if v < 1024:
+        return str(v)
+    for threshold, unit in [(1 << 40, 'T'), (1 << 30, 'G'), (1 << 20, 'M'), (1 << 10, 'K')]:
+        if v >= threshold:
+            val = v / threshold
+            if val >= 100:
+                return f"{int(val)}{unit}"
+            if val >= 10:
+                return f"{val:.0f}{unit}"
+            return f"{val:.1f}{unit}"
+    return str(v)
+
+
+def parse_stat_file(path):
+    """Parse a cgroup v2 key-value file into a dict."""
+    d = {}
+    try:
+        with open(path) as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 2:
+                    try:
+                        d[parts[0]] = int(parts[1])
+                    except ValueError:
+                        d[parts[0]] = parts[1]
+    except OSError:
+        pass
+    return d
+
+
+def build_tree(root, max_depth):
+    """Walk cgroup root and return a nested dict representing the tree."""
+    def walk(path, depth):
+        node = {'name': os.path.basename(path) or '/',
+                'path': path,
+                'children': [],
+                'depth': depth}
+        if max_depth is not None and depth >= max_depth:
+            return node
+        try:
+            entries = sorted(os.listdir(path))
+        except OSError:
+            return node
+        for name in entries:
+            child_path = os.path.join(path, name)
+            if os.path.isdir(child_path):
+                node['children'].append(walk(child_path, depth + 1))
+        return node
+    return walk(root, 0)
+
+
+def collect_flat(root, max_depth):
+    """Return a flat list of cgroup dirs under root, sorted by depth then path."""
+    dirs = []
+    for dirpath, subdirs, _ in os.walk(root):
+        depth = dirpath.replace(root, '').count(os.sep)
+        if max_depth is not None and depth > max_depth:
+            subdirs.clear()
+            continue
+        dirs.append(dirpath)
+        subdirs.sort()
+    dirs.sort(key=lambda d: (d.replace(root, '').count(os.sep), d))
+    return dirs
+
+
+def match_cgroup(dirs, pattern):
+    """Filter dirs by regex on relative path from cgroup root (no leading /)."""
+    cg_re = re.compile(pattern, re.IGNORECASE)
+    return [d for d in dirs if cg_re.search(
+        d.replace(CGROUP_ROOT, '').lstrip('/') or '/')]
+
+
+def format_stat(stat, key_res, value_filter):
+    """Filter and format stat dict entries into a display string."""
+    vals = []
+    for k, v in stat.items():
+        if key_res is not None and not any(r.search(k) for r in key_res):
+            continue
+        if isinstance(v, int) and value_filter:
+            if not value_filter(v):
+                continue
+        vals.append(f"{k}={human_size(v)}")
+    return ", ".join(vals) if vals else "(no data)"
+
+
+def mark_tree_visible(node, cgroup_re):
+    """Mark node.visible = True if node or any descendant matches cgroup_re."""
+    rel = node['path'].replace(CGROUP_ROOT, '').lstrip('/') or '/'
+    node['visible'] = bool(cgroup_re.search(rel))
+    for child in node['children']:
+        if mark_tree_visible(child, cgroup_re):
+            node['visible'] = True
+    return node['visible']
+
+
+def print_tree(node, data_file, key_res, value_filter, cgroup_re=None, prefix="", is_last=True):
+    """Recursively print a cgroup tree with data."""
+    visible_children = [c for c in node['children'] if c.get('visible', True)] if cgroup_re else node['children']
+
+    if not visible_children and cgroup_re and not node.get('visible'):
+        return
+
+    branch = "└── " if is_last else "├── "
+    connector = "    " if is_last else "│   "
+
+    stat_path = os.path.join(node['path'], data_file)
+    stat = parse_stat_file(stat_path)
+    val_str = format_stat(stat, key_res, value_filter)
+
+    name = node['name']
+    print(f"{prefix}{branch}{name}  {val_str}")
+
+    for i, child in enumerate(visible_children):
+        print_tree(child, data_file, key_res, value_filter, cgroup_re,
+                   prefix + connector, i == len(visible_children) - 1)
+
+
+def print_plain(dirs, data_file, key_res, value_filter):
+    """Print a flat listing with full paths."""
+    for d in dirs:
+        stat_path = os.path.join(d, data_file)
+        stat = parse_stat_file(stat_path)
+        name = d.replace(CGROUP_ROOT, '') or '/'
+        val_str = format_stat(stat, key_res, value_filter)
+        print(f"{name}  {val_str}")
+
+
+def parse_value_filter(raw):
+    """Parse a value filter string like '>:1M' into a callable."""
+    m = re.match(r'([<>=]+)\s*:\s*(.+)', raw)
+    if not m:
+        sys.exit(f"Invalid filter format: {raw} (expected OP:VAL, e.g. '>:1M')")
+
+    op = m.group(1)
+    val_str = m.group(2).strip().upper()
+
+    mult = 1
+    for suffix, factor in [('T', 1 << 40), ('G', 1 << 30), ('M', 1 << 20), ('K', 1 << 10)]:
+        if val_str.endswith(suffix):
+            mult = factor
+            val_str = val_str[:-1]
+            break
+
+    try:
+        threshold = int(float(val_str) * mult)
+    except ValueError:
+        sys.exit(f"Invalid filter value: {val_str}")
+
+    ops = {
+        '>':  lambda v: v > threshold,
+        '<':  lambda v: v < threshold,
+        '>=': lambda v: v >= threshold,
+        '<=': lambda v: v <= threshold,
+        '=':  lambda v: v == threshold,
+    }
+    if op not in ops:
+        sys.exit(f"Invalid filter operator: {op} (expected >, <, >=, <=, =)")
+    return ops[op]
+
+
+def resolve_proc_cgroups(pattern):
+    """Find cgroups containing processes whose comm matches the regex pattern.
+    Returns list of (cgroup_path, [pids]) sorted by path."""
+    comm_re = re.compile(pattern, re.IGNORECASE)
+    cgroups = {}
+    try:
+        for entry in os.listdir('/proc'):
+            if not entry.isdigit():
+                continue
+            try:
+                with open(f'/proc/{entry}/comm') as f:
+                    comm = f.read().strip()
+            except OSError:
+                continue
+            if not comm_re.search(comm):
+                continue
+            try:
+                with open(f'/proc/{entry}/cgroup') as f:
+                    for line in f:
+                        parts = line.strip().split(':')
+                        if len(parts) == 3 and parts[0] == '0' and parts[1] == '':
+                            rel = parts[2].lstrip('/')
+                            cg = os.path.join(CGROUP_ROOT, rel) if rel else CGROUP_ROOT
+                            cgroups.setdefault(cg, []).append(int(entry))
+                            break
+            except OSError:
+                continue
+    except OSError:
+        pass
+    if not cgroups:
+        sys.exit(f"No process found matching '{pattern}'")
+    return sorted(cgroups.items(), key=lambda x: x[0])
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Display cgroup resource data in tree form')
+    parser.add_argument('-g', '--cgroup', default=None,
+                        help='Show only cgroups matching this path segment')
+    parser.add_argument('-t', '--task', default=None, metavar='PATTERN',
+                        help='Show cgroups containing processes matching this name pattern')
+    parser.add_argument('-f', '--file', default='memory.stat',
+                        help='Cgroup data file to read (default: memory.stat)')
+    parser.add_argument('-k', '--keys', default=None,
+                        help='Comma-separated keys to display (default: all keys)')
+    parser.add_argument('-d', '--depth', type=int, default=None,
+                        help='Maximum tree depth (default: unlimited)')
+    parser.add_argument('-v', '--filter', default=None, metavar='OP:VAL',
+                        help='Filter keys by value, e.g. ">:1M", "<:1G", ">=:1048576"')
+    parser.add_argument('-p', '--plain', action='store_true',
+                        help='Flat listing instead of tree')
+    args = parser.parse_args()
+
+    if args.keys:
+        key_res = [re.compile(p.strip(), re.IGNORECASE) for p in args.keys.split(',')]
+    else:
+        key_res = None  # default: show all
+
+    # Parse value filter
+    value_filter = parse_value_filter(args.filter) if args.filter else None
+
+    if not os.path.isdir(CGROUP_ROOT):
+        sys.exit(f"Error: {CGROUP_ROOT} not found. Is cgroup v2 mounted?")
+
+    # Determine root path
+    if args.task:
+        cgroups = resolve_proc_cgroups(args.task)
+        for cg_path, _ in cgroups:
+            stat = parse_stat_file(os.path.join(cg_path, args.file))
+            name = cg_path.replace(CGROUP_ROOT, '') or '/'
+            val_str = format_stat(stat, key_res, value_filter)
+            print(f"{name}  {val_str}")
+        return
+    elif args.cgroup:
+        cg_re = re.compile(args.cgroup, re.IGNORECASE)
+        if args.plain:
+            dirs = collect_flat(CGROUP_ROOT, args.depth)
+            dirs = match_cgroup(dirs, args.cgroup)
+            if not dirs:
+                sys.exit(f"No cgroup found matching '{args.cgroup}'")
+            print_plain(dirs, args.file, key_res, value_filter)
+        else:
+            root = build_tree(CGROUP_ROOT, args.depth)
+            mark_tree_visible(root, cg_re)
+            if not root['visible']:
+                sys.exit(f"No cgroup found matching '{args.cgroup}'")
+            print_tree(root, args.file, key_res, value_filter, cg_re)
+        return
+    else:
+        root_path = CGROUP_ROOT
+
+    # Build data
+    if args.plain:
+        dirs = collect_flat(root_path, args.depth)
+        print_plain(dirs, args.file, key_res, value_filter)
+    else:
+        root = build_tree(root_path, args.depth)
+        print_tree(root, args.file, key_res, value_filter)
+
+
+if __name__ == '__main__':
+    main()
