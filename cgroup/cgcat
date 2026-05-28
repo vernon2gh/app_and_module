@@ -317,6 +317,13 @@ def monitor_loop(dirs, data_file, key_res, value_filter, extras, interval,
                         continue
                     if isinstance(v, int):
                         row[k] = v
+                if extras:
+                    for name, expr in extras:
+                        val = compute_extra_expr(expr, stat)
+                        try:
+                            row[name] = float(val)
+                        except ValueError:
+                            row[name] = val
                 rows.append(row)
 
             sys.stdout.flush()
