@@ -283,10 +283,95 @@ def resolve_proc_cgroups(pattern):
     return sorted(cgroups.items(), key=lambda x: x[0])
 
 
+def write_plotext_chart(series_history, interval, timestamp, tick):
+    """Build a terminal line chart from series_history using plotext-plus.
+    Returns the chart string (ANSI-escaped)."""
+    plot_data = []
+    labels = []
+    for key, values in series_history.items():
+        plot_data.append(values)
+        # Short basename for display, root "/" stays as-is
+        labels.append(key.rsplit('/', 1)[-1] if not key.startswith('/:') else key)
+
+    plt.clear_figure()
+    plt.theme('dark')
+
+    for series, label in zip(plot_data, labels):
+        h = hash(label)
+        # Full 6×6×6 256-color cube (216 colors) for max distinction
+        color_code = 16 + 36 * (h % 6) + 6 * ((h >> 4) % 6) + ((h >> 8) % 6)
+        plt.plot(series, marker='braille', label=label, color=color_code)
+
+    plt.title(f"cgcat -m {interval}s | {timestamp} | tick={tick} | Ctrl-C to save")
+    plt.xlabel('tick')
+    return plt.build()
+
+
+
+def write_csv(rows, key_res):
+    """Write collected monitoring data to a CSV file."""
+    columns = ['timestamp', 'cgroup']
+    key_set = set()
+    for row in rows:
+        key_set.update(k for k in row if k not in columns)
+    columns.extend(sorted(key_set))
+
+    filename = f"cgcat_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    with open(filename, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=columns, extrasaction='ignore')
+        writer.writeheader()
+        writer.writerows(rows)
+
+    print(f"\nSaved {len(rows)} rows to {filename}")
+    return filename
+
+
+def write_plotly_chart(rows, html_path):
+    """Generate an interactive plotly HTML chart from monitoring data."""
+    try:
+        import plotly.graph_objects as go
+    except ImportError:
+        return
+
+    cg_data = {}
+    for row in rows:
+        cg = row['cgroup']
+        if cg not in cg_data:
+            cg_data[cg] = {'timestamps': [], 'keys': {}}
+        cg_data[cg]['timestamps'].append(row['timestamp'])
+        for k, v in row.items():
+            if k in ('timestamp', 'cgroup'):
+                continue
+            if k not in cg_data[cg]['keys']:
+                cg_data[cg]['keys'][k] = []
+            cg_data[cg]['keys'][k].append(v if isinstance(v, (int, float)) else None)
+
+    fig = go.Figure()
+    for cg, data in cg_data.items():
+        for key, values in data['keys'].items():
+            if any(v is not None for v in values):
+                hover_vals = [human_size(v) if v is not None else 'N/A' for v in values]
+                fig.add_trace(go.Scatter(
+                    x=data['timestamps'], y=values,
+                    mode='lines+markers', name=f"{cg}:{key}",
+                    hovertemplate="%{customdata}<extra></extra>",
+                    customdata=hover_vals
+                ))
+
+    fig.update_layout(
+        title='cgcat Monitor',
+        xaxis_title='Time', yaxis_title='Value',
+        hovermode='x unified', legend=dict(font=dict(size=10)),
+        yaxis=dict(exponentformat='none', separatethousands=True)
+    )
+    fig.write_html(html_path)
+    print(f"Chart saved to {html_path}")
+
+
 def monitor_loop(dirs, data_file, key_res, value_filter, extras, interval):
     """Repeatedly read and display cgroup data as a dynamic line chart, collect rows for CSV."""
     rows = []
-    series_history = {}  # label -> [value per tick]
+    series_history = {}  # full-path key -> [value per tick]
     t0 = time.time()
     tick = 0
 
@@ -336,25 +421,7 @@ def monitor_loop(dirs, data_file, key_res, value_filter, extras, interval):
                 if key not in series_history:
                     series_history[key] = [None] * tick + [tick_snapshot[key]]
 
-            plot_data = []
-            labels = []
-            for key, values in series_history.items():
-                plot_data.append(values)
-                # Short basename for display, root "/" stays as-is
-                labels.append(key.rsplit('/', 1)[-1] if not key.startswith('/:') else key)
-
-            plt.clear_figure()
-            plt.theme('dark')
-
-            for series, label in zip(plot_data, labels):
-                h = hash(label)
-                # Use full 6×6×6 256-color cube (216 colors) for max distinction
-                color_code = 16 + 36 * (h % 6) + 6 * ((h >> 4) % 6) + ((h >> 8) % 6)
-                plt.plot(series, marker='braille', label=label, color=color_code)
-
-            plt.title(f"cgcat -m {interval}s | {timestamp} | tick={tick} | Ctrl-C to save")
-            plt.xlabel('tick')
-            chart = plt.build()
+            chart = write_plotext_chart(series_history, interval, timestamp, tick)
             sys.stdout.write("\033[H" + chart)
             sys.stdout.flush()
             tick += 1
@@ -369,73 +436,10 @@ def monitor_loop(dirs, data_file, key_res, value_filter, extras, interval):
         sys.stdout.write("\033[?1049l")
         sys.stdout.flush()
 
-    write_csv(rows, key_res)
-
-
-def write_csv(rows, key_res):
-    """Write collected monitoring data to a CSV file."""
-    if not rows:
-        print("\nNo data collected.")
-        return
-
-    columns = ['timestamp', 'cgroup']
-    key_set = set()
-    for row in rows:
-        key_set.update(k for k in row if k not in columns)
-    columns.extend(sorted(key_set))
-
-    filename = f"cgcat_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-    with open(filename, 'w', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=columns, extrasaction='ignore')
-        writer.writeheader()
-        writer.writerows(rows)
-
-    print(f"\nSaved {len(rows)} rows to {filename}")
-
-    html_path = filename.replace('.csv', '.html')
-    write_plotly_chart(rows, html_path)
-
-
-def write_plotly_chart(rows, html_path):
-    """Generate an interactive plotly HTML chart from monitoring data."""
-    try:
-        import plotly.graph_objects as go
-    except ImportError:
-        return
-
-    cg_data = {}
-    for row in rows:
-        cg = row['cgroup']
-        if cg not in cg_data:
-            cg_data[cg] = {'timestamps': [], 'keys': {}}
-        cg_data[cg]['timestamps'].append(row['timestamp'])
-        for k, v in row.items():
-            if k in ('timestamp', 'cgroup'):
-                continue
-            if k not in cg_data[cg]['keys']:
-                cg_data[cg]['keys'][k] = []
-            cg_data[cg]['keys'][k].append(v if isinstance(v, (int, float)) else None)
-
-    fig = go.Figure()
-    for cg, data in cg_data.items():
-        for key, values in data['keys'].items():
-            if any(v is not None for v in values):
-                hover_vals = [human_size(v) if v is not None else 'N/A' for v in values]
-                fig.add_trace(go.Scatter(
-                    x=data['timestamps'], y=values,
-                    mode='lines+markers', name=f"{cg}:{key}",
-                    hovertemplate="%{customdata}<extra></extra>",
-                    customdata=hover_vals
-                ))
-
-    fig.update_layout(
-        title='cgcat Monitor',
-        xaxis_title='Time', yaxis_title='Value',
-        hovermode='x unified', legend=dict(font=dict(size=10)),
-        yaxis=dict(exponentformat='none', separatethousands=True)
-    )
-    fig.write_html(html_path)
-    print(f"Chart saved to {html_path}")
+    if rows:
+        filename = write_csv(rows, key_res)
+        html_path = filename.replace('.csv', '.html')
+        write_plotly_chart(rows, html_path)
 
 
 def main():
