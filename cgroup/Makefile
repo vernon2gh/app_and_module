@@ -11,3 +11,4 @@ all:
 
 clean:
 	rm -fr a.out *.txt
+	rm -fr *.csv *.html

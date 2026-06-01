@@ -26,15 +26,13 @@ Usage:
 
 import argparse
 import csv
-import math
 import os
 import re
-import shutil
 import sys
 import time
 from datetime import datetime
 
-import asciichartpy as acp
+import plotext as plt
 
 CGROUP_ROOT = "/sys/fs/cgroup"
 
@@ -292,28 +290,9 @@ def monitor_loop(dirs, data_file, key_res, value_filter, extras, interval):
     t0 = time.time()
     tick = 0
 
-    is_dark_bg = True  # default
-    fgbg = os.environ.get('COLORFGBG', '')
-    if ';' in fgbg:
-        try:
-            _, bg = fgbg.split(';')
-            is_dark_bg = int(bg) < 8
-        except ValueError:
-            pass
-
-    def series_color(label):
-        """Deterministic color: bright for dark terminals, dark for light terminals."""
-        h = hash(label)
-        if is_dark_bg:
-            r = 2 + (h % 4)       # 2..5, brighter half of 6×6×6 cube
-            g = 2 + ((h >> 4) % 4)
-            b = 2 + ((h >> 8) % 4)
-        else:
-            r = h % 4             # 0..3, darker half
-            g = (h >> 4) % 4
-            b = (h >> 8) % 4
-        code = 16 + 36 * r + 6 * g + b
-        return f"\033[38;5;{code}m"
+    # Enter alternate screen buffer for flicker-free rendering
+    sys.stdout.write("\033[?1049h")
+    sys.stdout.flush()
 
     try:
         while True:
@@ -324,7 +303,8 @@ def monitor_loop(dirs, data_file, key_res, value_filter, extras, interval):
 
             for d in dirs:
                 stat = parse_stat_file(os.path.join(d, data_file))
-                cg_name = os.path.basename(d) or '/'
+                cg_path = d.replace(CGROUP_ROOT, '').lstrip('/') or '/'
+                cg_name = os.path.basename(cg_path) or '/'
                 row = {'timestamp': timestamp, 'cgroup': cg_name}
 
                 for k, v in stat.items():
@@ -333,13 +313,13 @@ def monitor_loop(dirs, data_file, key_res, value_filter, extras, interval):
                     if isinstance(v, int):
                         row[k] = v
                         if not value_filter or value_filter(v):
-                            tick_snapshot[f"{cg_name}:{k}"] = v
+                            tick_snapshot[f"{cg_path}:{k}"] = v
 
                 if extras:
                     for name, expr in extras:
                         val = compute_extra_expr(expr, stat)
                         try:
-                            tick_snapshot[f"{cg_name}:{name}"] = float(val)
+                            tick_snapshot[f"{cg_path}:{name}"] = float(val)
                         except ValueError:
                             pass
                         try:
@@ -349,85 +329,33 @@ def monitor_loop(dirs, data_file, key_res, value_filter, extras, interval):
 
                 rows.append(row)
 
+            # Update series history: append current tick data, init new series
             for key in series_history:
                 series_history[key].append(tick_snapshot.get(key))
             for key in tick_snapshot:
                 if key not in series_history:
                     series_history[key] = [None] * tick + [tick_snapshot[key]]
 
-            # Build chart data: convert None to NaN, put legend on the right
             plot_data = []
-            plot_colors = []
             labels = []
-            for label, values in series_history.items():
-                clean = [v if v is not None else float('nan') for v in values]
-                if any(not math.isnan(v) for v in clean):
-                    plot_data.append(clean)
-                    plot_colors.append(series_color(label))
-                    labels.append(label)
+            for key, values in series_history.items():
+                plot_data.append(values)
+                # Short basename for display, root "/" stays as-is
+                labels.append(key.rsplit('/', 1)[-1] if not key.startswith('/:') else key)
 
-            term = shutil.get_terminal_size()
-            print("\033[2J\033[H", end="")
-            print(f"cgcat -m {interval}s | {timestamp} | tick={tick} | Ctrl-C to save\n")
+            plt.clear_figure()
+            plt.theme('dark')
 
-            if plot_data and term.columns >= 40 and term.lines >= 10:
-                chart_height = max(6, min(20, term.lines - 6))
+            for series, label in zip(plot_data, labels):
+                h = hash(label)
+                # Use full 6×6×6 256-color cube (216 colors) for max distinction
+                color_code = 16 + 36 * (h % 6) + 6 * ((h >> 4) % 6) + ((h >> 8) % 6)
+                plt.plot(series, marker='braille', label=label, color=color_code)
 
-                # Sliding window: keep recent points, leave room for legend on the right
-                max_label_len = max((len(lbl) for lbl in labels), default=0)
-                max_points = max(10, term.columns - 16 - max_label_len)
-                plot_data_windowed = []
-                for series in plot_data:
-                    if len(series) > max_points:
-                        plot_data_windowed.append(series[-max_points:])
-                    else:
-                        plot_data_windowed.append(series)
-
-                # Compute global Y range with padding so few data points still fill the chart
-                all_vals = [v for series in plot_data for v in series if not math.isnan(v)]
-                if all_vals:
-                    y_min = min(all_vals)
-                    y_max = max(all_vals)
-                    # At least 5 % of max absolute value, or 10 % of the span
-                    y_pad = max((y_max - y_min) * 0.1,
-                                max(abs(y_max), abs(y_min)) * 0.05, 1)
-                    c_min = y_min - y_pad
-                    c_max = y_max + y_pad
-                    if min(all_vals) >= 0:
-                        c_min = max(0, c_min)
-                else:
-                    c_min, c_max = 0, 1
-
-                chart = acp.plot(plot_data_windowed, {
-                    'height': chart_height,
-                    'colors': plot_colors,
-                    'format': '{:>10.0f}',
-                    'min': c_min,
-                    'max': c_max,
-                })
-
-                # Print chart with legend overlaid on the right side
-                chart_lines = chart.rstrip().split('\n')
-                legend_col = max(14 + max_points, term.columns - max_label_len - 1)
-                for i, line in enumerate(chart_lines):
-                    print(line, end='')
-                    if i < len(labels):
-                        print(f"\033[{legend_col}G", end='')
-                        print(acp.colored(labels[i], series_color(labels[i])), end='')
-                    print()
-                for i in range(len(chart_lines), len(labels)):
-                    print(' ' * (legend_col - 1)
-                          + acp.colored(labels[i], series_color(labels[i])))
-            else:
-                if term.columns < 40 or term.lines < 10:
-                    print(f"(terminal too small: {term.columns}x{term.lines})")
-                for d in dirs:
-                    stat_path = os.path.join(d, data_file)
-                    stat = parse_stat_file(stat_path)
-                    name = d.replace(CGROUP_ROOT, '') or '/'
-                    val_str = format_stat(stat, key_res, value_filter, extras)
-                    print(f"{name}  {val_str}")
-
+            plt.title(f"cgcat -m {interval}s | {timestamp} | tick={tick} | Ctrl-C to save")
+            plt.xlabel('tick')
+            chart = plt.build()
+            sys.stdout.write("\033[H" + chart)
             sys.stdout.flush()
             tick += 1
 
@@ -436,8 +364,12 @@ def monitor_loop(dirs, data_file, key_res, value_filter, extras, interval):
             if sleep_for > 0:
                 time.sleep(sleep_for)
     except KeyboardInterrupt:
-        print()
-        write_csv(rows, key_res)
+        pass
+    finally:
+        sys.stdout.write("\033[?1049l")
+        sys.stdout.flush()
+
+    write_csv(rows, key_res)
 
 
 def write_csv(rows, key_res):
