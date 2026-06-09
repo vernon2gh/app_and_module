@@ -354,14 +354,23 @@ def write_plotly_chart(rows, html_path):
                 fig.add_trace(go.Scatter(
                     x=data['timestamps'], y=values,
                     mode='lines+markers', name=f"{cg}:{key}",
-                    hovertemplate="%{customdata}<extra></extra>",
+                    # Show the trace name (cg:key) in bold above the value, so a
+                    # hovered line is identifiable even among many lines.
+                    hovertemplate="<b>%{fullData.name}</b><br>%{customdata}<extra></extra>",
                     customdata=hover_vals
                 ))
 
     fig.update_layout(
         title='cgcat Monitor',
         xaxis_title='Time', yaxis_title='Value',
-        hovermode='x unified', legend=dict(font=dict(size=10)),
+        # 'closest': hovering a line shows only that line's value (not all lines)
+        hovermode='closest',
+        legend=dict(
+            font=dict(size=10),
+            itemclick='toggle',
+            itemdoubleclick='toggleothers',
+        ),
+        xaxis=dict(showspikes=True, spikemode='across', spikethickness=1),
         yaxis=dict(exponentformat='none', separatethousands=True)
     )
     fig.write_html(html_path)
