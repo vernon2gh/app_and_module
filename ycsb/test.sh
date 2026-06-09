@@ -3,8 +3,10 @@
 # YCSB workloadb MongoDB 基准测试复现
 # 环境：Docker 限制 10G 内存，WiredTiger cache 4.5G
 
-WORK=$(pwd)
 YCSB=$(pwd)/ycsb-0.17.0
+DB=$(pwd)/data/db
+LOG=$(pwd)/data/log
+DATE=$(date "+%Y-%m-%d-%H-%M-%S")
 
 # ============================================================
 # 0. 清理旧容器
@@ -17,9 +19,9 @@ fi
 # ============================================================
 # 1. 创建 MongoDB 数据目录（确保在 NVMe 分区上）
 # ============================================================
-sudo rm -fr $WORK/data/db
-mkdir -p $WORK/data/db
-echo "✓ 数据目录已创建: $WORK/data/db"
+sudo rm -fr $DB
+mkdir -p $DB $LOG
+echo "✓ 数据目录已创建: $DB"
 
 # ============================================================
 # 2. 启动 MongoDB Docker 容器（10G cgroup 内存限制）
@@ -29,7 +31,7 @@ docker run -d \
   --memory=10g \
   --memory-swap=10g \
   --cpus=8 \
-  -v $WORK/data/db:/data/db:z \
+  -v $DB:/data/db:z \
   -p 27017:27017 \
   mongo \
   mongod --wiredTigerCacheSizeGB 4.5 \
@@ -48,7 +50,7 @@ cd $YCSB
   -p recordcount=20000000 \
   -p operationcount=6000000 \
   -threads 32 \
-  &> $WORK/ycsb_load_wb_20M.log
+  &> $LOG/${DATE}_load.log
 
 echo "✓ YCSB Load 完成"
 
@@ -58,7 +60,7 @@ for i in {1..3}; do
     -p recordcount=20000000 \
     -p operationcount=6000000 \
     -threads 32 \
-    &> $WORK/ycsb_run_wb_run${i}.log
+    &> $LOG/${DATE}_run${i}.log
 
   echo "✓ YCSB 第 ${i} 次测试完成"
 done
@@ -77,7 +79,8 @@ echo "✓ MongoDB 容器已清理"
 # ============================================================
 for i in {1..3}; do
   echo "Run ${i} :"
-  grep -E "Throughput|AverageLatency" $WORK/ycsb_run_wb_run${i}.log
+  grep -E "Throughput|AverageLatency" $LOG/${DATE}_run${i}.log
 done
 
+echo "vmstat :"
 cat /proc/vmstat | grep -E "pgpgin|pgpgout|workingset_refault"
