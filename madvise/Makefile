@@ -23,7 +23,7 @@ COMMON = ../common
 APP = $(COMMON)/dynamic_debug.c $(COMMON)/trace.c app.c
 
 all:
-	$(CROSS_COMPILE)gcc --static -I$(COMMON) $(APP)
+	$(CROSS_COMPILE)gcc --static -pthread -I$(COMMON) $(APP)
 
 clean:
 	rm -fr a.out

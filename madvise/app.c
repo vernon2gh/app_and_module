@@ -1,100 +1,84 @@
 #include <stdio.h>
-#include <string.h>
-#include <errno.h>
 #include <stdbool.h>
 #include <unistd.h>
-#include <fcntl.h>
+#include <string.h>
+#include <errno.h>
 #include <pthread.h>
-#include <sys/types.h>
-#include <sys/stat.h>
 #include <sys/mman.h>
-#include "dynamic_debug.h"
 
-#define PAGESIZE	4096
+#define BUFSIZE		(64UL * 1024 * 1024)
+#define ITERATIONS	10000
+#define WRITERS_DEF	16
 
-enum demo_entry {
-	DEMO_SHARELIB_EXE,
-	DEMO_SHARELIB_NOEXE,
-	DEMO_ENTRY_MAX,
-};
+static volatile bool cancel;
 
-static char *string[DEMO_ENTRY_MAX] = {
-	"sharelib_exe",
-	"sharelib_noexe",
-};
-
-static enum demo_entry test_demo_entry(char *entry)
+static void touch_mapping(char *addr)
 {
-	int i;
+	long page_size = sysconf(_SC_PAGESIZE);
+	size_t i;
 
-	if (!entry)
-		return 0;
-
-	for (i = 0; i < DEMO_ENTRY_MAX; i++) {
-		if (!strncmp(entry, string[i], strlen(entry)))
-			return i;
-	}
-
-	printf("Don't look for right demo entry.\n");
-	return -EINVAL;
+	for (i = 0; i < BUFSIZE; i += (size_t)page_size)
+		addr[i] = 1;
 }
 
-static inline int get_file_pages(int fd)
+static void *munmap_fn(void *arg)
 {
-	struct stat st;
+	void *buf;
 
-	if(fstat(fd, &st)) {
-		printf("Get file size failed.\n");
-		return -1;
+	while (!cancel) {
+		buf = mmap(NULL, BUFSIZE, PROT_READ | PROT_WRITE,
+			   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+		if (buf == MAP_FAILED)
+			break;
+
+		touch_mapping(buf);
+		munmap(buf, BUFSIZE);
 	}
 
-	return st.st_size / PAGESIZE;
-}
-
-static void test_sharelib(bool exe)
-{
-	char *filepath;
-	int fd, nr_pages, i;
-	char *buf;
-	char tmp;
-
-	if (exe)
-		filepath = "/usr/libexec/gcc/x86_64-linux-gnu/13/liblto_plugin.so";
-	else
-		filepath = "/usr/lib/x86_64-linux-gnu/audit/sotruss-lib.so";
-
-	fd = open(filepath, O_RDONLY);
-	nr_pages = get_file_pages(fd);
-
-	buf = mmap(0, nr_pages * PAGESIZE, PROT_READ, MAP_FILE | MAP_SHARED, fd, 0);
-	for (i = 0; i < nr_pages; i++)
-		tmp = buf[i * PAGESIZE];
-
-	dynamic_debug_control("file madvise.c +p");
-	dynamic_debug_control("file vmscan.c +p");
-	madvise(buf, nr_pages * PAGESIZE, MADV_PAGEOUT);
-	dynamic_debug_control("file vmscan.c -p");
-	dynamic_debug_control("file madvise.c -p");
-
-	munmap(buf, nr_pages * PAGESIZE);
-	close(fd);
+	return NULL;
 }
 
 int main(int argc, char *argv[])
 {
-	dynamic_debug_start();
+	pthread_t writers[WRITERS_DEF];
+	struct timespec start, end;
+	double elapsed;
+	int advice;
+	void *buf;
+	int i;
 
-	switch (test_demo_entry(argv[1])) {
-		default:
-		case DEMO_SHARELIB_EXE:
-			test_sharelib(true);
-			break;
-		case DEMO_SHARELIB_NOEXE:
-			test_sharelib(false);
-			break;
+	if (argc != 2) {
+		printf("uasge: %s <cold/pageout>\n", argv[0]);
+		return -EINVAL;
 	}
 
-	dynamic_debug_end();
+	if (!strcmp(argv[1], "cold"))
+		advice = MADV_COLD;
+	else
+		advice = MADV_PAGEOUT;
+
+	buf = mmap(NULL, BUFSIZE, PROT_READ | PROT_WRITE,
+		   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (buf == MAP_FAILED)
+		return -EINVAL;
+	touch_mapping(buf);
+
+	for (i = 0; i < WRITERS_DEF; i++)
+		pthread_create(&writers[i], NULL, munmap_fn, NULL);
+
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	for (i = 0; i < ITERATIONS; i++)
+		madvise(buf, BUFSIZE, advice);
+	clock_gettime(CLOCK_MONOTONIC, &end);
+
+	elapsed = (end.tv_sec - start.tv_sec) +
+		  (end.tv_nsec - start.tv_nsec) / 1e9;
+	printf("Completed in %.2f seconds\n", elapsed);
+
+	cancel = true;
+	munmap(buf, BUFSIZE);
+	for (i = 0; i < WRITERS_DEF; i++)
+		pthread_join(writers[i], NULL);
 
 	return 0;
 }
