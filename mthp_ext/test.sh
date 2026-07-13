@@ -17,7 +17,8 @@ function test_simply()
 	fi
 	sleep 3
 
-	perf stat -e page-faults -- ./a.out
+	## perf stat -e page-faults -- ./a.out
+	time ./a.out; echo
 
 	if [ "$2" = "ebpf" ]; then
 		killall mthp_ext

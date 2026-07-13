@@ -1,32 +1,34 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
+#include <time.h>
 #include <sys/mman.h>
 
-#define PAGE_SIZE	4096
-#define BATCH_SIZE	(128 * 1024 * 1024)	// 128MB
-#define BATCH_PAGES	(BATCH_SIZE / PAGE_SIZE)
+#define BUFSIZE		(128UL * 1024 * 1024)
+#define ITERS		30000UL
+#define PAGESIZE	4096
 
 int main(int argc, char *argv[])
 {
+	unsigned long i;
 	char *buffer;
-	int err;
 
-	printf("Batch size : %d MB\n", BATCH_SIZE / (1024 * 1024));
-	printf("Batch pages: %d(4KB) or %d(2MB)\n", BATCH_PAGES,
-				BATCH_SIZE / (2 * 1024 * 1024));
 	sleep(1); /* wait ebpf to attach this task */
+	srandom(time(NULL));
 
-	buffer = mmap(NULL, BATCH_SIZE, PROT_READ | PROT_WRITE,
-				MAP_PRIVATE | MAP_ANON, -1, 0);
+	buffer = mmap(NULL, BUFSIZE, PROT_READ | PROT_WRITE,
+		      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (buffer == MAP_FAILED)
 		return -EINVAL;
 
-	memset(buffer, 't', BATCH_SIZE);
+	for (i = 0; i < ITERS; i++) {
+		int page_nr = random() % (BUFSIZE / PAGESIZE);
+		memset(buffer + page_nr * PAGESIZE, 't', PAGESIZE);
+	}
 
-unmap:
-	munmap(buffer, BATCH_SIZE);
+	munmap(buffer, BUFSIZE);
 
 	return 0;
 }
