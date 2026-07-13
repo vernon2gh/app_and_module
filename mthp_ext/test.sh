@@ -31,9 +31,9 @@ function test_redis()
 	sleep 60
 	sysctl -q vm.overcommit_memory=1
 	if [ "$2" = "BGSAVE" ]; then
-		redis-server --daemonize yes
+		redis-server --disable-thp no --daemonize yes
 	else
-		redis-server --save "" --daemonize yes
+		redis-server --disable-thp no --save "" --daemonize yes
 	fi
 	echo $3 > $CGROUP/memory.high
 	echo $(pidof redis-server) > $CGROUP/cgroup.procs
