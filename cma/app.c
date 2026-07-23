@@ -36,7 +36,7 @@ static enum demo_entry test_demo_entry(char *entry)
 enum {
 	CMA_ALLOC = _IOW('T', 0, unsigned long),
 	CMA_FREE  = _IOW('T', 1, unsigned long),
-	CMA_PFN   = _IOWR('T', 0, unsigned long),
+	CMA_PFN   = _IOWR('T', 2, unsigned long),
 };
 
 #define SZ_1G	0x40000000

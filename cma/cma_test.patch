@@ -1,0 +1,197 @@
+diff --git a/arch/x86/kernel/setup.c b/arch/x86/kernel/setup.c
+index 46882ce79c3a..e89a58e22dae 100644
+--- a/arch/x86/kernel/setup.c
++++ b/arch/x86/kernel/setup.c
+@@ -27,6 +27,7 @@
+ #include <linux/tboot.h>
+ #include <linux/usb/xhci-dbgp.h>
+ #include <linux/vmalloc.h>
++#include <linux/cma.h>
+ 
+ #include <uapi/linux/mount.h>
+ 
+@@ -1258,6 +1259,8 @@ void __init setup_arch(char **cmdline_p)
+ 
+ 	x86_init.timers.wallclock_init();
+ 
++	cma_test_reserve();
++
+ 	/*
+ 	 * This needs to run before setup_local_APIC() which soft-disables the
+ 	 * local APIC temporarily and that masks the thermal LVT interrupt,
+diff --git a/include/linux/cma.h b/include/linux/cma.h
+index 8555d38a97b1..a50e52fa61eb 100644
+--- a/include/linux/cma.h
++++ b/include/linux/cma.h
+@@ -61,4 +61,7 @@ extern int cma_for_each_area(int (*it)(struct cma *cma, void *data), void *data)
+ extern bool cma_intersects(struct cma *cma, unsigned long start, unsigned long end);
+ 
+ extern void cma_reserve_pages_on_error(struct cma *cma);
++
++void cma_test_reserve(void);
++
+ #endif
+diff --git a/mm/Makefile b/mm/Makefile
+index eff9f9e7e061..52702b583dd0 100644
+--- a/mm/Makefile
++++ b/mm/Makefile
+@@ -147,3 +147,4 @@ obj-$(CONFIG_SHRINKER_DEBUG) += shrinker_debug.o
+ obj-$(CONFIG_EXECMEM) += execmem.o
+ obj-$(CONFIG_TMPFS_QUOTA) += shmem_quota.o
+ obj-$(CONFIG_LAZY_MMU_MODE_KUNIT_TEST) += tests/lazy_mmu_mode_kunit.o
++obj-y += cma_test.o
+diff --git a/mm/cma_test.c b/mm/cma_test.c
+new file mode 100644
+index 000000000000..9798479e8adc
+--- /dev/null
++++ b/mm/cma_test.c
+@@ -0,0 +1,149 @@
++#include <linux/module.h>
++#include <linux/mm.h>
++#include <linux/mm_types.h>
++#include <linux/types.h>
++#include <linux/sizes.h>
++#include <linux/cma.h>
++#include <linux/miscdevice.h>
++#include <linux/fs.h>
++
++#define CMA_NAME	"cma_test"
++#define CMA_SIZE	SZ_2G
++
++enum {
++	CMA_ALLOC = _IOW('T', 0, unsigned long),
++	CMA_FREE  = _IOW('T', 1, unsigned long),
++	CMA_PFN   = _IOWR('T', 2, unsigned long),
++};
++
++struct cma *cma;
++struct page *page;
++
++void cma_test_reserve(void)
++{
++	cma_declare_contiguous_nid(0, CMA_SIZE, 0, PAGE_SIZE, 0, false,
++				   CMA_NAME, &cma, NUMA_NO_NODE);
++}
++
++static int cma_test_open(struct inode *inode, struct file *file)
++{
++	return 0;
++}
++
++static int cma_test_map(struct file *filp, struct vm_area_struct *vma)
++{
++	unsigned long start = vma->vm_start;
++	unsigned long end = vma->vm_end;
++	unsigned long size = end - start;
++
++	return remap_pfn_range(vma, start, page_to_pfn(page), size,
++			       vma->vm_page_prot);
++}
++
++static unsigned long get_pfn_from_user_vaddr(unsigned long vaddr)
++{
++	struct mm_struct *mm = current->mm;
++	unsigned long pfn;
++	spinlock_t *ptl;
++	pgd_t *pgd;
++	p4d_t *p4d;
++	pud_t *pud;
++	pmd_t *pmd;
++	pte_t *pte;
++
++	down_read(&mm->mmap_lock);
++
++	pgd = pgd_offset(mm, vaddr);
++	if (pgd_none(*pgd) || pgd_bad(*pgd))
++		goto err;
++
++	p4d = p4d_offset(pgd, vaddr);
++	if (p4d_none(*p4d) || p4d_bad(*p4d))
++		goto err;
++
++	pud = pud_offset(p4d, vaddr);
++	if (pud_none(*pud) || pud_bad(*pud))
++		goto err;
++
++	pmd = pmd_offset(pud, vaddr);
++	if (pmd_none(*pmd) || pmd_bad(*pmd))
++		goto err;
++
++	pte = pte_offset_map_lock(mm, pmd, vaddr, &ptl);
++	if (pte == NULL)
++		goto err;
++	pfn = pte_pfn(*pte);
++	pte_unmap_unlock(pte, ptl);
++
++	up_read(&mm->mmap_lock);
++	return pfn;
++
++err:
++	up_read(&mm->mmap_lock);
++	return -ENXIO;
++}
++
++static long cma_test_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
++{
++	unsigned long vaddr, pfn;
++	int err = 0;
++
++	switch (cmd) {
++	case CMA_ALLOC:
++		page = cma_alloc(cma, arg / PAGE_SIZE, get_order(arg), false);
++		if (page == NULL) {
++			pr_err("alloc memory from CMA is failed.\n");
++			return -ENOMEM;
++		}
++		break;
++	case CMA_FREE:
++		cma_release(cma, page, arg / PAGE_SIZE);
++		break;
++	case CMA_PFN:
++		if (copy_from_user(&vaddr, (void __user *)arg, sizeof(unsigned long)))
++			return -EINVAL;
++
++		pfn = get_pfn_from_user_vaddr(vaddr);
++
++		if (copy_to_user((void __user *)arg, &pfn, sizeof(unsigned long)))
++			return -EINVAL;
++
++		break;
++	default:
++		err = -EINVAL;
++		break;
++	}
++
++	return err;
++}
++
++static struct file_operations dev_fops = {
++	.owner          = THIS_MODULE,
++	.open           = cma_test_open,
++	.mmap           = cma_test_map,
++	.unlocked_ioctl = cma_test_ioctl,
++};
++
++static struct miscdevice cma_test_misc = {
++	.minor = MISC_DYNAMIC_MINOR,
++	.name = CMA_NAME,
++	.fops = &dev_fops,
++};
++
++static int __init cma_test_init(void)
++{
++	misc_register(&cma_test_misc);
++
++        return 0;
++}
++
++static void __exit cma_test_exit(void)
++{
++	misc_deregister(&cma_test_misc);
++}
++
++module_init(cma_test_init);
++module_exit(cma_test_exit);
++
++MODULE_DESCRIPTION("cma test");
++MODULE_LICENSE("GPL v2");
