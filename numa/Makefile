@@ -7,7 +7,7 @@ COMMON = ../common
 APP = $(COMMON)/dynamic_debug.c $(COMMON)/trace.c app.c
 
 all:
-	$(CROSS_COMPILE)gcc -I$(COMMON) $(APP) -lnuma -pthread
+	$(CROSS_COMPILE)gcc -I$(COMMON) $(APP) -lnuma
 
 clean:
 	rm -fr a.out
