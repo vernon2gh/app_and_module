@@ -18,22 +18,36 @@ ifeq ($(CROSS_COMPILE),)
 	CROSS_COMPILE =
 endif
 
-COMMON = ../common
-
 MAKE = make ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) \
        -C $(KERNEL_SRC) O=$(KERNEL_BUILD)               \
        M=$(PWD)
 
-obj-m += mod.o
-APP = $(COMMON)/dynamic_debug.c $(COMMON)/trace.c app.c
+ifneq ($(wildcard mod.c),)
+	obj-m += mod.o
+endif
+
+ifneq ($(wildcard app.c),)
+	COMMON = ../common
+	APP ?= $(COMMON)/dynamic_debug.c $(COMMON)/trace.c app.c
+	CFLAGS ?= --static -O2 -pthread -I$(COMMON)
+	LIBS ?=
+endif
 
 all:
+ifneq ($(wildcard mod.c),)
 	$(MAKE) modules
-	$(CROSS_COMPILE)gcc --static -I$(COMMON) $(APP)
+endif
+ifneq ($(wildcard app.c),)
+	$(CROSS_COMPILE)gcc $(CFLAGS) $(LIBS) $(APP)
+endif
 
 install:
+ifneq ($(wildcard mod.c),)
 	$(MAKE) INSTALL_MOD_PATH=$(ROOTFS) modules_install
+endif
 
 clean:
+ifneq ($(wildcard mod.c),)
 	$(MAKE) clean
+endif
 	rm -fr a.out
