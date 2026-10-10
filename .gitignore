@@ -11,3 +11,5 @@
 */*.mod.o
 */*.order
 */log
+*/access*
+*/origin*

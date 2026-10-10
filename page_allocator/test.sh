@@ -1,10 +1,10 @@
 #!/bin/bash
 
-cat /proc/meminfo  > origin_meminfo.txt
+cat /proc/meminfo  > origin_meminfo
 insmod mod.ko demo_entry="$1"
-cat /proc/meminfo  > access_meminfo.txt
+cat /proc/meminfo  > access_meminfo
 
-../common/compare_values origin_meminfo.txt access_meminfo.txt 2 100000
+../common/compare_values origin_meminfo access_meminfo
 
 rmmod mod.ko
-rm -fr *.txt
+rm -fr origin_* access_*

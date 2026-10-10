@@ -20,14 +20,14 @@ dd if=/dev/urandom of=~/testfile bs=1M count=3000
 ## echo "+ 44 0 4" > /sys/kernel/debug/lru_gen ## aging
 ## echo "- 44 0 1" > /sys/kernel/debug/lru_gen ## evict
 
-cat /proc/vmstat | grep -E "pgskip|pgrefill|pgscan|pgsteal" > origin_vmstat.txt
+cat /proc/vmstat | grep -E "pgskip|pgrefill|pgscan|pgsteal" > origin_vmstat
 insmod mod.ko
-cat /proc/vmstat | grep -E "pgskip|pgrefill|pgscan|pgsteal" > access_vmstat.txt
+cat /proc/vmstat | grep -E "pgskip|pgrefill|pgscan|pgsteal" > access_vmstat
 
-../common/compare_values origin_vmstat.txt access_vmstat.txt 2 1
+../common/compare_values origin_vmstat access_vmstat
 dmesg
 rmmod mod
-rm -fr *.txt
+rm -fr origin_* access_*
 killall a.out
 # killall stress-ng
 swapoff $SWAPFILE

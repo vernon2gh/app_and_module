@@ -1,22 +1,80 @@
-#!/bin/bash
+#!/usr/bin/env python3
+"""Compare numeric entries between two stat files and print a table of
+entries whose value changed.
 
-if [ $# -ne 4 ]; then
-	echo "Usage: compare_values file1 file2 column delta"
-	return 1
-fi
+Each line is expected to look like "<name> <value>"
+(e.g. /proc/meminfo, /proc/vmstat, cgroup memory.stat).
+The value is the first integer field after the name.
 
-diff -y --suppress-common-lines $1 $2 | awk -v column=$3 -v delta=$4 '
-function abs(x) {
-	return (x < 0 ? -x : x);
-}
-{
-	split($0, array, "|");
-	split(array[1], left, " ");
-	val1 = left[column];
-	split(array[2], right, " ");
-	val2 = right[column];
+Usage: compare_values [-s] [-a] FILE1 FILE2
 
-	if (abs(val2 - val1) >= delta)
-		print $0, ", delta " abs(val2-val1);
-}
-'
+  -s, --sort  sort by delta descending (default: native order)
+  -a, --all   show all common entries, even unchanged ones
+"""
+
+import argparse
+
+
+def parse(path):
+    """Return {name: value}, value = first integer field of the line."""
+    values = {}
+    with open(path) as f:
+        for line in f:
+            fields = line.split()
+            if not fields:
+                continue
+            for field in fields[1:]:
+                try:
+                    values[fields[0]] = int(field)
+                    break
+                except ValueError:
+                    continue
+    return values
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description="Compare numeric entries between two stat files.")
+    ap.add_argument("file1", help="stat file before")
+    ap.add_argument("file2", help="stat file after")
+    ap.add_argument("-s", "--sort", action="store_true",
+                    help="sort by delta descending (default: native order)")
+    ap.add_argument("-a", "--all", action="store_true",
+                    help="show all common entries, even unchanged ones")
+    args = ap.parse_args()
+
+    before = parse(args.file1)
+    after = parse(args.file2)
+
+    rows = []
+    for name, val1 in before.items():
+        val2 = after.get(name)
+        if val2 is None:
+            continue
+        delta = val2 - val1
+        if args.all or delta != 0:
+            rows.append((name, val1, val2, delta))
+
+    if not rows:
+        if args.all:
+            print("no common entries found")
+        else:
+            print("no entries changed")
+        return
+
+    if args.sort:
+        rows.sort(key=lambda r: abs(r[3]), reverse=True)
+
+    header = ("NAME", "BEFORE", "AFTER", "DELTA")
+    str_rows = [(n, str(v1), str(v2), f"{d:+d}") for n, v1, v2, d in rows]
+    widths = [max(len(r[i]) for r in [header] + str_rows) for i in range(4)]
+    fmt = f"{{:<{widths[0]}}} {{:>{widths[1]}}} {{:>{widths[2]}}} {{:>{widths[3]}}}"
+
+    print(fmt.format(*header))
+    print(" ".join("-" * w for w in widths))
+    for row in str_rows:
+        print(fmt.format(*row))
+
+
+if __name__ == "__main__":
+    main()

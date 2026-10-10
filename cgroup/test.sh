@@ -19,25 +19,25 @@ case $1 in
 		fallocate -l 100M $TESTFILE
 		vmtouch -t $TESTFILE >> /dev/null
 
-		cat /proc/meminfo  > origin_meminfo.txt
+		cat /proc/meminfo  > origin_meminfo
 		echo 100M > $CGROUP/$1/memory.reclaim
-		cat /proc/meminfo  > access_meminfo.txt
+		cat /proc/meminfo  > access_meminfo
 
-		../common/compare_values origin_meminfo.txt access_meminfo.txt 2 100000
+		../common/compare_values origin_meminfo access_meminfo
 		;;
 	"memory_reclaim_dirty")
 		dd if=/dev/random of=$TESTFILE bs=1M count=100 &> /dev/null
 
-		cat /proc/meminfo  > origin_meminfo.txt
-		cat /proc/vmstat   > origin_vmstat.txt
+		cat /proc/meminfo  > origin_meminfo
+		cat /proc/vmstat   > origin_vmstat
 		echo 100M > $CGROUP/$1/memory.reclaim
-		cat /proc/meminfo  > access_meminfo.txt
-		cat /proc/vmstat   > access_vmstat.txt
+		cat /proc/meminfo  > access_meminfo
+		cat /proc/vmstat   > access_vmstat
 
 		color_echo "meminfo:"
-		../common/compare_values origin_meminfo.txt access_meminfo.txt 2 10000
+		../common/compare_values origin_meminfo access_meminfo
 		color_echo "vmstat:"
-		../common/compare_values origin_vmstat.txt  access_vmstat.txt  2 2560
+		../common/compare_values origin_vmstat  access_vmstat
 		;;
 	"memory_reclaim_swappiness")
 		## allocate 100MB anon page
@@ -52,20 +52,20 @@ case $1 in
 		## allocate 100MB file page
 		dd if=/dev/random of=$TESTFILE bs=1M count=100 &> /dev/null
 
-		cat /proc/meminfo           > origin_meminfo.txt
-		cat /proc/vmstat            > origin_vmstat.txt
-		cat $CGROUP/$1/memory.stat  > origin_memory_stat.txt
+		cat /proc/meminfo           > origin_meminfo
+		cat /proc/vmstat            > origin_vmstat
+		cat $CGROUP/$1/memory.stat  > origin_memory_stat
 		echo "100M swappiness=200"  > $CGROUP/$1/memory.reclaim
-		cat /proc/meminfo           > access_meminfo.txt
-		cat /proc/vmstat            > access_vmstat.txt
-		cat $CGROUP/$1/memory.stat  > access_memory_stat.txt
+		cat /proc/meminfo           > access_meminfo
+		cat /proc/vmstat            > access_vmstat
+		cat $CGROUP/$1/memory.stat  > access_memory_stat
 
 		color_echo "meminfo:"
-		../common/compare_values origin_meminfo.txt access_meminfo.txt 2 10000
+		../common/compare_values origin_meminfo access_meminfo
 		color_echo "vmstat:"
-		../common/compare_values origin_vmstat.txt  access_vmstat.txt  2 2560
+		../common/compare_values origin_vmstat  access_vmstat
 		color_echo "cgroup memory stat:"
-		../common/compare_values origin_memory_stat.txt access_memory_stat.txt 2 2560
+		../common/compare_values origin_memory_stat access_memory_stat
 
 		killall a.out
 		swapoff /dev/zram0
@@ -73,16 +73,16 @@ case $1 in
 	"kswapd")
 		echo 10M > $CGROUP/$1/memory.high
 
-		cat /proc/meminfo  > origin_meminfo.txt
-		cat /proc/vmstat   > origin_vmstat.txt
+		cat /proc/meminfo  > origin_meminfo
+		cat /proc/vmstat   > origin_vmstat
 		dd if=/dev/random of=$TESTFILE bs=1M count=100 &> /dev/null
-		cat /proc/meminfo  > access_meminfo.txt
-		cat /proc/vmstat   > access_vmstat.txt
+		cat /proc/meminfo  > access_meminfo
+		cat /proc/vmstat   > access_vmstat
 
 		color_echo "meminfo:"
-		../common/compare_values origin_meminfo.txt access_meminfo.txt 2 10000
+		../common/compare_values origin_meminfo access_meminfo
 		color_echo "vmstat:"
-		../common/compare_values origin_vmstat.txt  access_vmstat.txt  2 2560
+		../common/compare_values origin_vmstat  access_vmstat
 		color_echo "kswapd stat:"
 		cat /proc/`pidof kswapd0`/stat
 		;;
