@@ -17,7 +17,7 @@ enum demo_entry {
 	DEMO_NORMAL,
 	DEMO_NORMAL_FORK,
 	DEMO_NORMAL_PTHREAD,
-	DEMO_NORMAL_PSWPIN_PSWPOUT,
+	DEMO_NORMAL_SWPINOUT,
 	DEMO_THP,
 	DEMO_MTHP,
 	DEMO_ENTRY_MAX,
@@ -27,7 +27,7 @@ static char *string[DEMO_ENTRY_MAX] = {
 	"normal",
 	"normal_fork",
 	"normal_pthread",
-	"normal_pswpin_pswpout",
+	"normal_swpinout",
 	"thp",
 	"mthp",
 };
@@ -140,7 +140,7 @@ static void swap_normal_pthread(void)
 	trace_exit();
 }
 
-static void swap_normal_pswpin_pswpout(void)
+static void swap_normal_swpinout(void)
 {
 	char *buf;
 	char tmp;
@@ -205,8 +205,8 @@ int main(int argc, char *argv[])
 		case DEMO_NORMAL_PTHREAD:
 			swap_normal_pthread();
 			break;
-		case DEMO_NORMAL_PSWPIN_PSWPOUT:
-			swap_normal_pswpin_pswpout();
+		case DEMO_NORMAL_SWPINOUT:
+			swap_normal_swpinout();
 			break;
 		case DEMO_THP:
 			swap_thp();
