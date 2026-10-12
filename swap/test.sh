@@ -3,15 +3,15 @@
 DEMO=$1
 SWAP=$2
 
-if [ $SWAP = "swapfile" ] || [ $SWAP = "zswap" ]; then
+if [ "$SWAP" = "swapfile" ] || [ "$SWAP" = "zswap" ]; then
 	SWAPDEV=~/swapfile
 	fallocate -l 100M $SWAPDEV
 	chmod 0600 $SWAPDEV
 	mkswap $SWAPDEV &> /dev/null
-	if [ $SWAP = "zswap" ]; then
+	if [ "$SWAP" = "zswap" ]; then
 		echo 1 > /sys/module/zswap/parameters/enabled
 	fi
-elif [ $SWAP = "zram" ]; then
+elif [ "$SWAP" = "zram" ]; then
 	SWAPDEV=/dev/zram0
 	## echo /dev/sdb > /sys/block/zram0/backing_dev
 	echo 100M > /sys/block/zram0/disksize
@@ -28,7 +28,7 @@ cat /proc/vmstat   > origin_vmstat
 cat /proc/meminfo  > access_meminfo
 cat /proc/vmstat   > access_vmstat
 
-if [ $SWAP = "zram" ] && [ "$(cat /sys/block/zram0/backing_dev)" != "none" ]; then
+if [ "$SWAP" = "zram" ] && [ "$(cat /sys/block/zram0/backing_dev)" != "none" ]; then
 	cat /sys/kernel/debug/zram/zram0/block_state	## default block state
 	echo all > /sys/block/zram0/idle		## mark all page to idle flags
 	cat /sys/kernel/debug/zram/zram0/block_state
@@ -43,9 +43,9 @@ fi
 ../common/compare_values origin_meminfo access_meminfo -a
 ../common/compare_values origin_vmstat  access_vmstat  -a
 
-if [ $SWAP = "swapfile" ] || [ $SWAP = "zswap" ]; then
+if [ "$SWAP" = "swapfile" ] || [ "$SWAP" = "zswap" ]; then
 	rm -fr $SWAPDEV
-	if [ $SWAP = "zswap" ]; then
+	if [ "$SWAP" = "zswap" ]; then
 		echo 0 > /sys/module/zswap/parameters/enabled
 	fi
 fi

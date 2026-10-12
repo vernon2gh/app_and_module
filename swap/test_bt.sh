@@ -3,15 +3,15 @@
 DEMO=$1
 SWAP=$2
 
-if [ $SWAP = "swapfile" ] || [ $SWAP = "zswap" ]; then
+if [ "$SWAP" = "swapfile" ] || [ "$SWAP" = "zswap" ]; then
 	SWAPDEV=~/swapfile
 	fallocate -l 100M $SWAPDEV
 	chmod 0600 $SWAPDEV
 	mkswap $SWAPDEV &> /dev/null
-	if [ $SWAP = "zswap" ]; then
+	if [ "$SWAP" = "zswap" ]; then
 		echo 1 > /sys/module/zswap/parameters/enabled
 	fi
-elif [ $SWAP = "zram" ]; then
+elif [ "$SWAP" = "zram" ]; then
 	SWAPDEV=/dev/zram0
 	echo 100M > /sys/block/zram0/disksize
 	mkswap $SWAPDEV &> /dev/null
@@ -33,9 +33,9 @@ if [ -n "$SWAPDEV" ]; then
 	swapoff $SWAPDEV
 fi
 
-if [ $SWAP = "swapfile" ] || [ $SWAP = "zswap" ]; then
+if [ "$SWAP" = "swapfile" ] || [ "$SWAP" = "zswap" ]; then
 	rm -fr $SWAPDEV
-	if [ $SWAP = "zswap" ]; then
+	if [ "$SWAP" = "zswap" ]; then
 		echo 0 > /sys/module/zswap/parameters/enabled
 	fi
 fi
