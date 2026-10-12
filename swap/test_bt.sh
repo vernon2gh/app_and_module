@@ -17,7 +17,9 @@ elif [ $SWAP = "zram" ]; then
 	mkswap $SWAPDEV &> /dev/null
 fi
 
-swapon $SWAPDEV
+if [ -n "$SWAPDEV" ]; then
+	swapon $SWAPDEV
+fi
 
 echo "swap-in 各阶段平均耗时"
 echo
@@ -27,7 +29,9 @@ echo
 echo "内核: 挂探针"
 bpftrace -c "./a.out $DEMO" ./swapin.bt
 
-swapoff $SWAPDEV
+if [ -n "$SWAPDEV" ]; then
+	swapoff $SWAPDEV
+fi
 
 if [ $SWAP = "swapfile" ] || [ $SWAP = "zswap" ]; then
 	rm -fr $SWAPDEV

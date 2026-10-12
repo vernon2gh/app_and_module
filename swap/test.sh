@@ -18,7 +18,9 @@ elif [ $SWAP = "zram" ]; then
 	mkswap $SWAPDEV &> /dev/null
 fi
 
-swapon $SWAPDEV
+if [ -n "$SWAPDEV" ]; then
+	swapon $SWAPDEV
+fi
 
 cat /proc/meminfo  > origin_meminfo
 cat /proc/vmstat   > origin_vmstat
@@ -34,7 +36,9 @@ if [ $SWAP = "zram" ] && [ "$(cat /sys/block/zram0/backing_dev)" != "none" ]; th
 	cat /sys/kernel/debug/zram/zram0/block_state
 fi
 
-swapoff $SWAPDEV
+if [ -n "$SWAPDEV" ]; then
+	swapoff $SWAPDEV
+fi
 
 ../common/compare_values origin_meminfo access_meminfo -a
 ../common/compare_values origin_vmstat  access_vmstat  -a
