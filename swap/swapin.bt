@@ -40,9 +40,9 @@ fexit:zram:zcomp_decompress /pid == cpid/
 
 END
 {
-	printf("  do_swap_page     %10llu ns, nr=%d\n",
-	       @nr[1] ? @sum[1] / @nr[1] : 0, @nr[1]);
-	printf("  zcomp_decompress %10llu ns, nr=%d\n",
+	printf("  swap machinery (swap cache, slot, zram) %llu ns/page, nr=%d\n",
+	       @nr[1] ? (@sum[1] - @sum[2]) / @nr[1] : 0, @nr[1]);
+	printf("  data decompression                      %llu ns/page, nr=%d\n",
 	       @nr[2] ? @sum[2] / @nr[2] : 0, @nr[2]);
 
 	clear(@start);

@@ -251,8 +251,8 @@ static void swapin_test(void (*fill)(char *buf, unsigned seed))
 	}
 	getrusage(RUSAGE_SELF, &r2);
 
-	printf("avg=%.2f us, nr=%d, majflt=%ld\n", sum / iters / 1000.0, iters,
-						r2.ru_majflt - r1.ru_majflt);
+	printf("pagefault handling %.2f us/page, nr=%d, majflt=%ld\n",
+		sum / iters / 1000, iters, r2.ru_majflt - r1.ru_majflt);
 }
 
 static void __swap_thp(void *start_vaddr, int pagenum)
