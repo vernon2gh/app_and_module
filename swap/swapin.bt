@@ -1,0 +1,51 @@
+#!/usr/bin/env bpftrace
+/*
+ * swapin.bt - 从 swap 设备回读一个匿名页的耗时分解
+ *
+ * 监控如下阶段:
+ *   SWAP 缺页处理 do_swap_page
+ *   ZRAM 解压数据 zcomp_decompress
+ *
+ * 用法:
+ *   sudo bpftrace -c './a.out' ./swapin.bt
+ */
+
+fentry:vmlinux:do_swap_page /pid == cpid/
+{
+	@start[tid, 1] = nsecs;
+}
+
+fexit:vmlinux:do_swap_page /pid == cpid/
+{
+	@nr[1] += 1;
+
+	$delta = nsecs - @start[tid, 1];
+	@sum[1] += $delta;
+	delete(@start[tid, 1]);
+}
+
+fentry:zram:zcomp_decompress /pid == cpid/
+{
+	@start[tid, 2] = nsecs;
+}
+
+fexit:zram:zcomp_decompress /pid == cpid/
+{
+	@nr[2] += 1;
+
+	$delta = nsecs - @start[tid, 2];
+	@sum[2] += $delta;
+	delete(@start[tid, 2]);
+}
+
+END
+{
+	printf("  do_swap_page     %10llu ns, nr=%d\n",
+	       @nr[1] ? @sum[1] / @nr[1] : 0, @nr[1]);
+	printf("  zcomp_decompress %10llu ns, nr=%d\n",
+	       @nr[2] ? @sum[2] / @nr[2] : 0, @nr[2]);
+
+	clear(@start);
+	clear(@nr);
+	clear(@sum);
+}
