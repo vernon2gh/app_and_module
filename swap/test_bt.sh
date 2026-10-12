@@ -1,7 +1,7 @@
 #!/bin/bash
 
-SWAP=$1
-DEMO=$2
+DEMO=$1
+SWAP=$2
 
 if [ $SWAP = "swapfile" ] || [ $SWAP = "zswap" ]; then
 	SWAPDEV=~/swapfile
