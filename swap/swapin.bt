@@ -24,12 +24,16 @@ fexit:vmlinux:do_swap_page /pid == cpid/
 	delete(@start[tid, 1]);
 }
 
-fentry:zram:zcomp_decompress /pid == cpid/
+fentry:vmlinux:crypto_acomp_decompress,	/* zswap decompress */
+fentry:zram:zcomp_decompress		/* zram  decompress */
+/pid == cpid/
 {
 	@start[tid, 2] = nsecs;
 }
 
-fexit:zram:zcomp_decompress /pid == cpid/
+fexit:vmlinux:crypto_acomp_decompress,	/* zswap decompress */
+fexit:zram:zcomp_decompress		/* zram  decompress */
+/pid == cpid/
 {
 	@nr[2] += 1;
 
@@ -40,9 +44,9 @@ fexit:zram:zcomp_decompress /pid == cpid/
 
 END
 {
-	printf("  swap machinery (swap cache, slot, zram) %llu ns/page, nr=%d\n",
+	printf("  swap machinery (swap cache, slot etc) %llu ns/page, nr=%d\n",
 	       @nr[1] ? (@sum[1] - @sum[2]) / @nr[1] : 0, @nr[1]);
-	printf("  data decompression                      %llu ns/page, nr=%d\n",
+	printf("  data decompression                    %llu ns/page, nr=%d\n",
 	       @nr[2] ? @sum[2] / @nr[2] : 0, @nr[2]);
 
 	clear(@start);
